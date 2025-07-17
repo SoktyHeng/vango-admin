@@ -22,10 +22,19 @@ class _DashboardPageState extends State<DashboardPage> {
   int totalBookings = 0;
   int totalRevenue = 0;
 
+  // Add a ValueNotifier to manage hover state without full rebuilds
+  final ValueNotifier<String> _hoveredItemNotifier = ValueNotifier<String>('');
+
   @override
   void initState() {
     super.initState();
     _loadSummaryData();
+  }
+
+  @override
+  void dispose() {
+    _hoveredItemNotifier.dispose();
+    super.dispose();
   }
 
   Future<void> _loadSummaryData() async {
@@ -36,6 +45,11 @@ class _DashboardPageState extends State<DashboardPage> {
     final userCount = userSnapshot.size;
 
     // Fetch total drivers
+    final driverSnapshot = await firestore
+        .collection('drivers')
+        .where('status', isEqualTo: 'approved')
+        .get();
+    final driverCount = driverSnapshot.size;
 
     // Fetch bookings and calculate total revenue
     final bookingsSnapshot = await firestore.collection('bookings').get();
@@ -46,7 +60,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
     setState(() {
       totalUsers = userCount;
-      totalDrivers = 0;
+      totalDrivers = driverCount;
       totalBookings = bookingsSnapshot.size;
       totalRevenue = revenue;
     });
@@ -145,28 +159,114 @@ class _DashboardPageState extends State<DashboardPage> {
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: getRecentBookingsStream(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: Color(0xFF4E4E94)),
+          );
+        }
+
+        if (snapshot.hasError) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  size: 64,
+                  color: Colors.grey.shade400,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Error loading bookings',
+                  style: TextStyle(
+                    fontSize: 18,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        if (!snapshot.hasData || snapshot.data!.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.book_outlined,
+                  size: 64,
+                  color: Colors.grey.shade400,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'No recent bookings found',
+                  style: TextStyle(
+                    fontSize: 18,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          );
         }
 
         final rows = snapshot.data!
             .map(
               (booking) => DataRow(
                 cells: [
-                  DataCell(Text(booking['userName'])),
-                  DataCell(SizedBox(width: 80, child: Text(booking['route']))),
+                  DataCell(
+                    Text(
+                      booking['userName'],
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF2D3748),
+                      ),
+                    ),
+                  ),
+                  DataCell(SizedBox(width: 120, child: Text(booking['route']))),
                   DataCell(Text(booking['date'])),
                   DataCell(Text(booking['time'])),
                   DataCell(Text(booking['seat_number'])),
-                  DataCell(Text(booking['status'])),
+                  DataCell(
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: booking['status'] == 'Completed'
+                            ? Colors.green
+                            : Colors.blue,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        booking['status'],
+                        style: TextStyle(
+                          color: booking['status'] == 'Completed'
+                              ? Colors.white
+                              : Colors.white,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             )
             .toList();
 
         return SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
           child: DataTable(
+            columnSpacing: 20,
+            headingRowColor: WidgetStateProperty.all(Colors.grey.shade50),
+            headingTextStyle: const TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF2D3748),
+            ),
+            dataTextStyle: TextStyle(color: Colors.grey.shade700),
             columns: const [
               DataColumn(label: Text("User")),
               DataColumn(label: Text("Route")),
@@ -375,47 +475,61 @@ class _DashboardPageState extends State<DashboardPage> {
     VoidCallback? onTap,
     bool logout = false,
   }) {
-    return GestureDetector(
-      onTap: logout ? _logout : onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? Colors.white
-              : logout
-              ? Colors.red.shade600
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              icon,
-              color: isSelected
-                  ? const Color(0xFF4E4E94)
-                  : logout
-                  ? Colors.white
-                  : Colors.white,
-              size: 20,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  color: logout
-                      ? Colors.white
-                      : isSelected
-                      ? const Color(0xFF4E4E94)
-                      : Colors.white,
-                  fontWeight: FontWeight.w600,
-                ),
+    return ValueListenableBuilder<String>(
+      valueListenable: _hoveredItemNotifier,
+      builder: (context, hoveredItem, child) {
+        return MouseRegion(
+          onEnter: (_) => _hoveredItemNotifier.value = label,
+          onExit: (_) => _hoveredItemNotifier.value = '',
+          child: GestureDetector(
+            onTap: logout ? _logout : onTap,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? Colors.white
+                    : logout
+                    ? (hoveredItem == label
+                          ? Colors.red.shade700
+                          : Colors.red.shade600)
+                    : (hoveredItem == label
+                          ? Colors.white.withOpacity(0.1)
+                          : Colors.transparent),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    icon,
+                    color: isSelected
+                        ? const Color(0xFF4E4E94)
+                        : logout
+                        ? Colors.white
+                        : Colors.white,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        color: logout
+                            ? Colors.white
+                            : isSelected
+                            ? const Color(0xFF4E4E94)
+                            : Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 

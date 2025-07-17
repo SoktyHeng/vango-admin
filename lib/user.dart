@@ -1,6 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'dart:io';
 
 class UserPage extends StatefulWidget {
   const UserPage({super.key});
