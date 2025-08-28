@@ -60,6 +60,9 @@ class _TripPageState extends State<TripPage> {
               'driverName': data['driverName'] ?? '',
               'vanId': data['vanId'] ?? '',
               'vanLicense': data['vanLicense'] ?? '',
+              'status': data['status'] ?? 'active', 
+              'createdAt': data['createdAt'],
+              'updatedAt': data['updatedAt'],
             };
           }).toList(),
         );
@@ -192,37 +195,50 @@ class _TripPageState extends State<TripPage> {
   }
 
   String _computeScheduleStatus(Map<String, dynamic> schedule) {
+    // First check if there's a stored status
+    final storedStatus = schedule['status'];
+    if (storedStatus != null && storedStatus.isNotEmpty) {
+      return storedStatus;
+    }
+
+    // Fallback to date-based computation for backward compatibility
     final dateStr = schedule['date'];
     if (dateStr == null || dateStr.isEmpty) {
-      return 'Invalid';
+      return 'invalid';
     }
 
     try {
       final scheduleDate = DateTime.parse(dateStr);
       final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final scheduleDay = DateTime(scheduleDate.year, scheduleDate.month, scheduleDate.day);
 
-      if (scheduleDate.isBefore(DateTime(now.year, now.month, now.day))) {
-        return 'Completed';
-      } else if (scheduleDate.isAtSameMomentAs(
-        DateTime(now.year, now.month, now.day),
-      )) {
-        return 'Today';
+      if (scheduleDay.isBefore(today)) {
+        return 'completed';
+      } else if (scheduleDay.isAtSameMomentAs(today)) {
+        return 'active';
       } else {
-        return 'Upcoming';
+        return 'scheduled';
       }
     } catch (e) {
-      return 'Invalid Date';
+      return 'invalid';
     }
   }
 
   Color _getStatusColor(String status) {
-    switch (status) {
-      case 'Completed':
+    switch (status.toLowerCase()) {
+      case 'active':
         return Colors.green;
-      case 'Today':
-        return Colors.orange;
-      case 'Upcoming':
+      case 'scheduled':
         return Colors.blue;
+      case 'completed':
+        return Colors.grey;
+      case 'cancelled':
+        return Colors.red;
+      case 'delayed':
+        return Colors.orange;
+      case 'invalid':
+        return Colors.red.shade300;
       default:
         return Colors.grey;
     }
@@ -383,6 +399,32 @@ class _TripPageState extends State<TripPage> {
       _selectedDateFilter = 'All';
       _selectedRouteFilter = null;
     });
+  }
+
+  Future<void> _updateScheduleStatus(String scheduleId, String newStatus) async {
+    try {
+      await _firestore.collection('schedules').doc(scheduleId).update({
+        'status': newStatus,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Schedule status updated to "$newStatus"'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error updating status: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -848,34 +890,88 @@ class _TripPageState extends State<TripPage> {
                                         minHeight: 32,
                                       ),
                                     ),
-                                    IconButton(
+                                    PopupMenuButton<String>(
                                       icon: Icon(
-                                        Icons.edit,
+                                        Icons.more_vert,
                                         size: 18,
-                                        color: Colors.orange.shade600,
+                                        color: Colors.grey.shade600,
                                       ),
-                                      onPressed: () => _editSchedule(schedule),
-                                      tooltip: 'Edit',
-                                      padding: const EdgeInsets.all(4),
-                                      constraints: const BoxConstraints(
-                                        minWidth: 32,
-                                        minHeight: 32,
-                                      ),
-                                    ),
-                                    IconButton(
-                                      icon: Icon(
-                                        Icons.delete,
-                                        size: 18,
-                                        color: Colors.red.shade600,
-                                      ),
-                                      onPressed: () =>
-                                          _deleteSchedule(schedule['id']),
-                                      tooltip: 'Delete',
-                                      padding: const EdgeInsets.all(4),
-                                      constraints: const BoxConstraints(
-                                        minWidth: 32,
-                                        minHeight: 32,
-                                      ),
+                                      tooltip: 'More Actions',
+                                      onSelected: (value) {
+                                        switch (value) {
+                                          case 'edit':
+                                            _editSchedule(schedule);
+                                            break;
+                                          case 'complete':
+                                            _updateScheduleStatus(schedule['id'], 'completed');
+                                            break;
+                                          case 'cancel':
+                                            _updateScheduleStatus(schedule['id'], 'cancelled');
+                                            break;
+                                          case 'activate':
+                                            _updateScheduleStatus(schedule['id'], 'active');
+                                            break;
+                                          case 'delete':
+                                            _deleteSchedule(schedule['id']);
+                                            break;
+                                        }
+                                      },
+                                      itemBuilder: (context) => [
+                                        const PopupMenuItem(
+                                          value: 'edit',
+                                          child: Row(
+                                            children: [
+                                              Icon(Icons.edit, size: 16, color: Colors.orange),
+                                              SizedBox(width: 8),
+                                              Text('Edit'),
+                                            ],
+                                          ),
+                                        ),
+                                        if (schedule['status'] != 'completed')
+                                          const PopupMenuItem(
+                                            value: 'complete',
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.check_circle, size: 16, color: Colors.green),
+                                                SizedBox(width: 8),
+                                                Text('Mark Complete'),
+                                              ],
+                                            ),
+                                          ),
+                                        if (schedule['status'] != 'cancelled')
+                                          const PopupMenuItem(
+                                            value: 'cancel',
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.cancel, size: 16, color: Colors.red),
+                                                SizedBox(width: 8),
+                                                Text('Cancel'),
+                                              ],
+                                            ),
+                                          ),
+                                        if (schedule['status'] != 'active')
+                                          const PopupMenuItem(
+                                            value: 'activate',
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.play_arrow, size: 16, color: Colors.blue),
+                                                SizedBox(width: 8),
+                                                Text('Activate'),
+                                              ],
+                                            ),
+                                          ),
+                                        const PopupMenuDivider(),
+                                        const PopupMenuItem(
+                                          value: 'delete',
+                                          child: Row(
+                                            children: [
+                                              Icon(Icons.delete, size: 16, color: Colors.red),
+                                              SizedBox(width: 8),
+                                              Text('Delete'),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ],
                                 ),
@@ -1038,7 +1134,21 @@ class _AddScheduleDialogState extends State<AddScheduleDialog> {
         throw Exception('Selected van does not have an assigned driver');
       }
 
-      // Create schedule data
+      // Determine initial status based on date
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final scheduleDay = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day);
+      
+      String initialStatus;
+      if (scheduleDay.isAtSameMomentAs(today)) {
+        initialStatus = 'active'; // Today's trips are active
+      } else if (scheduleDay.isAfter(today)) {
+        initialStatus = 'scheduled'; // Future trips are scheduled
+      } else {
+        initialStatus = 'active'; // Past dates (shouldn't happen with date picker restrictions)
+      }
+
+      // Create schedule data with status
       final scheduleData = {
         'routeId': _selectedRouteId,
         'date':
@@ -1050,6 +1160,9 @@ class _AddScheduleDialogState extends State<AddScheduleDialog> {
         'driverName': driverName,
         'vanId': vanData['vanId'] ?? _selectedVanId,
         'vanLicense': vanData['licensePlate'] ?? 'Unknown License',
+        'status': initialStatus, // Add status field
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
       };
 
       await _firestore.collection('schedules').add(scheduleData);

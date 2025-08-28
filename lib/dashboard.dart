@@ -1,5 +1,5 @@
 import 'package:admin_vango/driver.dart';
-import 'package:admin_vango/route_management.dart';
+// import 'package:admin_vango/route_management.dart';
 import 'package:admin_vango/trip.dart';
 import 'package:admin_vango/user.dart';
 import 'package:admin_vango/van_management.dart';
@@ -155,6 +155,17 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  Color _getStatusColor(String? status) {
+    switch (status) {
+      case 'Completed':
+        return Colors.green;
+      case 'Upcoming':
+        return Colors.blue;
+      default:
+        return Colors.grey; 
+    }
+  }
+
   Widget buildRecentBookingsTable() {
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: getRecentBookingsStream(),
@@ -237,17 +248,21 @@ class _DashboardPageState extends State<DashboardPage> {
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: booking['status'] == 'Completed'
-                            ? Colors.green
-                            : Colors.blue,
+                        color: _getStatusColor(
+                          booking['status'],
+                        ).withOpacity(0.1),
                         borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _getStatusColor(
+                            booking['status'],
+                          ).withOpacity(0.5),
+                        ),
                       ),
                       child: Text(
-                        booking['status'],
+                        booking['status'] ?? 'Unknown',
                         style: TextStyle(
-                          color: booking['status'] == 'Completed'
-                              ? Colors.white
-                              : Colors.white,
+                          color: _getStatusColor(booking['status']),
+                          fontWeight: FontWeight.w600,
                           fontSize: 12,
                         ),
                       ),
@@ -341,8 +356,8 @@ class _DashboardPageState extends State<DashboardPage> {
         return UserPage();
       case 'Drivers':
         return DriverPage();
-      case 'Route Management':
-        return RouteManagementPage();
+      // case 'Route Management':
+      //   return RouteManagementPage();
       case 'Van Management':
         return VanManagementPage();
       default:
@@ -411,14 +426,14 @@ class _DashboardPageState extends State<DashboardPage> {
                       setState(() => _selectedPage = "Drivers");
                     },
                   ),
-                  navItem(
-                    "Route Management",
-                    Icons.route,
-                    _selectedPage == "Route Management",
-                    onTap: () {
-                      setState(() => _selectedPage = "Route Management");
-                    },
-                  ),
+                  // navItem(
+                  //   "Route Management",
+                  //   Icons.route,
+                  //   _selectedPage == "Route Management",
+                  //   onTap: () {
+                  //     setState(() => _selectedPage = "Route Management");
+                  //   },
+                  // ),
                   navItem(
                     "Van Management",
                     Icons.directions_bus,
@@ -566,3 +581,4 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 }
+
