@@ -28,6 +28,7 @@ class _DriverPageState extends State<DriverPage> {
               'name': data['name'] ?? '',
               'email': data['email'] ?? '',
               'phone': data['phoneNumber'] ?? '',
+              'profileImage': data['profileImage'] ?? '',
               'licenseImage': data['licenseImage'] ?? '',
               'licenseNumber': data['licenseNumber'] ?? '',
               'status': data['status'] ?? '',
@@ -99,8 +100,8 @@ class _DriverPageState extends State<DriverPage> {
       }
 
       // Log the retrieved data for debugging
-      print('Driver Email: $email');
-      print('Driver Password: ${password != null ? '[HIDDEN]' : 'NULL'}');
+      debugPrint('Driver Email: $email');
+      debugPrint('Driver Password: ${password != null ? '[HIDDEN]' : 'NULL'}');
 
       // Create Firebase Auth account with email and password
       final userCredential = await FirebaseAuth.instance
@@ -117,28 +118,32 @@ class _DriverPageState extends State<DriverPage> {
       });
 
       // Close loading indicator
-      Navigator.pop(context);
+      if (mounted) {
+        Navigator.pop(context);
 
-      // Show success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Driver ${driver['name']} approved successfully'),
-          backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Driver ${driver['name']} approved successfully'),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     } catch (e) {
       // Close loading indicator
-      Navigator.pop(context);
+      if (mounted) {
+        Navigator.pop(context);
 
-      // Show error message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to approve driver: $e'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+        // Show error message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to approve driver: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 
@@ -183,28 +188,32 @@ class _DriverPageState extends State<DriverPage> {
           .delete();
 
       // Close loading indicator
-      Navigator.pop(context);
+      if (mounted) {
+        Navigator.pop(context);
 
-      // Show success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Driver $driverName rejected and removed successfully'),
-          backgroundColor: Colors.orange,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Driver $driverName rejected and removed successfully'),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     } catch (e) {
       // Close loading indicator
-      Navigator.pop(context);
+      if (mounted) {
+        Navigator.pop(context);
 
-      // Show error message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to reject driver: $e'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+        // Show error message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to reject driver: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 
@@ -346,6 +355,49 @@ class _DriverPageState extends State<DriverPage> {
                 ],
               ),
               const SizedBox(height: 20),
+              
+              // Profile Image
+              CircleAvatar(
+                radius: 40,
+                backgroundColor: const Color(0xFF4E4E94),
+                child: driver['profileImage'] != null &&
+                        driver['profileImage'].toString().isNotEmpty
+                    ? ClipOval(
+                        child: Image.network(
+                          driver['profileImage'],
+                          width: 80,
+                          height: 80,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return const Icon(
+                              Icons.person,
+                              color: Colors.white,
+                              size: 40,
+                            );
+                          },
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) {
+                              return child;
+                            }
+                            return const SizedBox(
+                              width: 80,
+                              height: 80,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            );
+                          },
+                        ),
+                      )
+                    : const Icon(
+                        Icons.person,
+                        color: Colors.white,
+                        size: 40,
+                      ),
+              ),
+              const SizedBox(height: 16),
+              
               Text(
                 driver['name'],
                 style: const TextStyle(
@@ -397,7 +449,9 @@ class _DriverPageState extends State<DriverPage> {
                           );
                         },
                         loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
+                          if (loadingProgress == null) {
+                            return child;
+                          }
                           return const Center(
                             child: CircularProgressIndicator(),
                           );
@@ -439,7 +493,7 @@ class _DriverPageState extends State<DriverPage> {
       final driverData = doc.docs.first.data();
       return driverData['status'] == 'approved';
     } catch (e) {
-      print('Error checking driver approval status: $e');
+      debugPrint('Error checking driver approval status: $e');
       return false;
     }
   }
@@ -458,27 +512,33 @@ class _DriverPageState extends State<DriverPage> {
 
       if (isApproved) {
         // Navigate to driver dashboard
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => DashboardPage()),
-        );
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => DashboardPage()),
+          );
+        }
       } else {
         // Show not approved message
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Your account is not approved yet. Please wait for admin approval.',
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Your account is not approved yet. Please wait for admin approval.',
+              ),
+              backgroundColor: Colors.orange,
             ),
-            backgroundColor: Colors.orange,
-          ),
-        );
+          );
+        }
         await FirebaseAuth.instance.signOut();
       }
     } catch (e) {
       // Handle login error
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Login failed: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Login failed: $e'))
+        );
+      }
     }
   }
 
@@ -527,7 +587,7 @@ class _DriverPageState extends State<DriverPage> {
           // For now, we'll just delete the Firestore document
           // The auth account will remain but become orphaned
         } catch (e) {
-          print('Warning: Could not delete auth account: $e');
+          debugPrint('Warning: Could not delete auth account: $e');
         }
       }
 
@@ -538,29 +598,64 @@ class _DriverPageState extends State<DriverPage> {
           .delete();
 
       // Close loading indicator
-      Navigator.pop(context);
+      if (mounted) {
+        Navigator.pop(context);
 
-      // Show success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Driver $driverName removed successfully'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Driver $driverName removed successfully'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     } catch (e) {
       // Close loading indicator
-      Navigator.pop(context);
+      if (mounted) {
+        Navigator.pop(context);
 
-      // Show error message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to remove driver: $e'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+        // Show error message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to remove driver: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
+  }
+
+  Widget _buildDriverProfileImage(String? imageUrl) {
+    if (imageUrl == null || imageUrl.isEmpty) {
+      return const Icon(Icons.person, color: Colors.white, size: 20);
+    }
+
+    return ClipOval(
+      child: Image.network(
+        imageUrl,
+        width: 40,
+        height: 40,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return const Icon(Icons.person, color: Colors.white, size: 20);
+        },
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) {
+            return child;
+          }
+          return const SizedBox(
+            width: 40,
+            height: 40,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -637,7 +732,7 @@ class _DriverPageState extends State<DriverPage> {
             borderRadius: BorderRadius.circular(12),
             boxShadow: [
               BoxShadow(
-                color: Colors.grey.withOpacity(0.1),
+                color: Colors.grey.withValues(alpha: 0.1),
                 blurRadius: 8,
                 offset: const Offset(0, 2),
               ),
@@ -675,7 +770,7 @@ class _DriverPageState extends State<DriverPage> {
               borderRadius: BorderRadius.circular(12),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.grey.withOpacity(0.1),
+                  color: Colors.grey.withValues(alpha: 0.1),
                   blurRadius: 10,
                   offset: const Offset(0, 4),
                 ),
@@ -776,6 +871,7 @@ class _DriverPageState extends State<DriverPage> {
                     ),
                     dataTextStyle: TextStyle(color: Colors.grey.shade700),
                     columns: [
+                      const DataColumn(label: Text('Profile')),
                       const DataColumn(label: Text('Name')),
                       const DataColumn(label: Text('Phone')),
                       const DataColumn(label: Text('License No.')),
@@ -787,6 +883,15 @@ class _DriverPageState extends State<DriverPage> {
                     rows: filteredDrivers.map((driver) {
                       return DataRow(
                         cells: [
+                          DataCell(
+                            CircleAvatar(
+                              radius: 20,
+                              backgroundColor: const Color(0xFF4E4E94),
+                              child: _buildDriverProfileImage(
+                                driver['profileImage']?.toString(),
+                              ),
+                            ),
+                          ),
                           DataCell(
                             Text(
                               driver['name'] ?? 'No Name',
@@ -861,8 +966,9 @@ class _DriverPageState extends State<DriverPage> {
                                                   child,
                                                   loadingProgress,
                                                 ) {
-                                                  if (loadingProgress == null)
+                                                  if (loadingProgress == null) {
                                                     return child;
+                                                  }
                                                   return const Center(
                                                     child: SizedBox(
                                                       width: 12,

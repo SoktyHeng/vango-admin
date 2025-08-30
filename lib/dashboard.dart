@@ -1,4 +1,5 @@
 import 'package:admin_vango/driver.dart';
+import 'package:admin_vango/recurring_schedule_page.dart';
 // import 'package:admin_vango/route_management.dart';
 import 'package:admin_vango/trip.dart';
 import 'package:admin_vango/user.dart';
@@ -162,7 +163,7 @@ class _DashboardPageState extends State<DashboardPage> {
       case 'Upcoming':
         return Colors.blue;
       default:
-        return Colors.grey; 
+        return Colors.grey;
     }
   }
 
@@ -358,6 +359,8 @@ class _DashboardPageState extends State<DashboardPage> {
         return DriverPage();
       // case 'Route Management':
       //   return RouteManagementPage();
+      case 'Recurring Schedules':
+        return const RecurringScheduleManager();
       case 'Van Management':
         return VanManagementPage();
       default:
@@ -426,14 +429,16 @@ class _DashboardPageState extends State<DashboardPage> {
                       setState(() => _selectedPage = "Drivers");
                     },
                   ),
-                  // navItem(
-                  //   "Route Management",
-                  //   Icons.route,
-                  //   _selectedPage == "Route Management",
-                  //   onTap: () {
-                  //     setState(() => _selectedPage = "Route Management");
-                  //   },
-                  // ),
+                  navItem(
+                    "Recurring Schedules",
+                    Icons.repeat,
+                    _selectedPage == "Recurring Schedules",
+                    onTap: () {
+                      setState(
+                        () => _selectedPage = "Recurring Schedules",
+                      ); 
+                    },
+                  ),
                   navItem(
                     "Van Management",
                     Icons.directions_bus,
@@ -443,6 +448,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     },
                   ),
                   const Spacer(),
+
                   navItem("Logout", Icons.logout, false, logout: true),
                 ],
               ),
@@ -581,4 +587,3 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 }
-

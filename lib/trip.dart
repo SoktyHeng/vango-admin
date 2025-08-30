@@ -2,7 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 class TripPage extends StatefulWidget {
-  const TripPage({super.key});
+  final bool isRecurring;
+  const TripPage({super.key, this.isRecurring = false});
 
   @override
   State<TripPage> createState() => _TripPageState();
@@ -60,7 +61,7 @@ class _TripPageState extends State<TripPage> {
               'driverName': data['driverName'] ?? '',
               'vanId': data['vanId'] ?? '',
               'vanLicense': data['vanLicense'] ?? '',
-              'status': data['status'] ?? 'active', 
+              'status': data['status'] ?? 'active',
               'createdAt': data['createdAt'],
               'updatedAt': data['updatedAt'],
             };
@@ -161,16 +162,24 @@ class _TripPageState extends State<TripPage> {
           final scheduleDate = DateTime.parse(dateStr);
           final now = DateTime.now();
           final today = DateTime(now.year, now.month, now.day);
-          final scheduleDay = DateTime(scheduleDate.year, scheduleDate.month, scheduleDate.day);
+          final scheduleDay = DateTime(
+            scheduleDate.year,
+            scheduleDate.month,
+            scheduleDate.day,
+          );
 
           switch (_selectedDateFilter) {
             case 'Today':
               return scheduleDay.isAtSameMomentAs(today);
             case 'This Week':
-              final weekStart = today.subtract(Duration(days: today.weekday - 1));
+              final weekStart = today.subtract(
+                Duration(days: today.weekday - 1),
+              );
               final weekEnd = weekStart.add(const Duration(days: 6));
-              return scheduleDay.isAfter(weekStart.subtract(const Duration(days: 1))) &&
-                     scheduleDay.isBefore(weekEnd.add(const Duration(days: 1)));
+              return scheduleDay.isAfter(
+                    weekStart.subtract(const Duration(days: 1)),
+                  ) &&
+                  scheduleDay.isBefore(weekEnd.add(const Duration(days: 1)));
             case 'Future':
               return scheduleDay.isAfter(today);
             case 'Past':
@@ -211,7 +220,11 @@ class _TripPageState extends State<TripPage> {
       final scheduleDate = DateTime.parse(dateStr);
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
-      final scheduleDay = DateTime(scheduleDate.year, scheduleDate.month, scheduleDate.day);
+      final scheduleDay = DateTime(
+        scheduleDate.year,
+        scheduleDate.month,
+        scheduleDate.day,
+      );
 
       if (scheduleDay.isBefore(today)) {
         return 'completed';
@@ -361,7 +374,10 @@ class _TripPageState extends State<TripPage> {
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Delete'),
           ),
@@ -401,7 +417,10 @@ class _TripPageState extends State<TripPage> {
     });
   }
 
-  Future<void> _updateScheduleStatus(String scheduleId, String newStatus) async {
+  Future<void> _updateScheduleStatus(
+    String scheduleId,
+    String newStatus,
+  ) async {
     try {
       await _firestore.collection('schedules').doc(scheduleId).update({
         'status': newStatus,
@@ -528,11 +547,26 @@ class _TripPageState extends State<TripPage> {
                           isDense: true,
                         ),
                         items: const [
-                          DropdownMenuItem(value: 'All', child: Text('All Dates')),
-                          DropdownMenuItem(value: 'Today', child: Text('Today')),
-                          DropdownMenuItem(value: 'This Week', child: Text('This Week')),
-                          DropdownMenuItem(value: 'Future', child: Text('Future Trips')),
-                          DropdownMenuItem(value: 'Past', child: Text('Past Trips')),
+                          DropdownMenuItem(
+                            value: 'All',
+                            child: Text('All Dates'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Today',
+                            child: Text('Today'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'This Week',
+                            child: Text('This Week'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Future',
+                            child: Text('Future Trips'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Past',
+                            child: Text('Past Trips'),
+                          ),
                         ],
                         onChanged: (value) {
                           setState(() {
@@ -675,7 +709,11 @@ class _TripPageState extends State<TripPage> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.filter_list_off, size: 64, color: Colors.grey),
+                          Icon(
+                            Icons.filter_list_off,
+                            size: 64,
+                            color: Colors.grey,
+                          ),
                           const SizedBox(height: 16),
                           const Text(
                             'No trips match your filters',
@@ -903,75 +941,95 @@ class _TripPageState extends State<TripPage> {
                                             _editSchedule(schedule);
                                             break;
                                           case 'complete':
-                                            _updateScheduleStatus(schedule['id'], 'completed');
+                                            _updateScheduleStatus(
+                                              schedule['id'],
+                                              'completed',
+                                            );
                                             break;
                                           case 'cancel':
-                                            _updateScheduleStatus(schedule['id'], 'cancelled');
+                                            _updateScheduleStatus(
+                                              schedule['id'],
+                                              'cancelled',
+                                            );
                                             break;
                                           case 'activate':
-                                            _updateScheduleStatus(schedule['id'], 'active');
+                                            _updateScheduleStatus(
+                                              schedule['id'],
+                                              'active',
+                                            );
                                             break;
                                           case 'delete':
                                             _deleteSchedule(schedule['id']);
                                             break;
                                         }
                                       },
-                                      itemBuilder: (context) => [
-                                        const PopupMenuItem(
-                                          value: 'edit',
-                                          child: Row(
-                                            children: [
-                                              Icon(Icons.edit, size: 16, color: Colors.orange),
-                                              SizedBox(width: 8),
-                                              Text('Edit'),
-                                            ],
-                                          ),
-                                        ),
-                                        if (schedule['status'] != 'completed')
+                                      itemBuilder: (context) {
+                                        final currentStatus = schedule['status'] ?? 'active';
+                                        
+                                        return [
                                           const PopupMenuItem(
-                                            value: 'complete',
+                                            value: 'edit',
                                             child: Row(
                                               children: [
-                                                Icon(Icons.check_circle, size: 16, color: Colors.green),
+                                                Icon(
+                                                  Icons.edit,
+                                                  size: 16,
+                                                  color: Colors.orange,
+                                                ),
                                                 SizedBox(width: 8),
-                                                Text('Mark Complete'),
+                                                Text('Edit'),
                                               ],
                                             ),
                                           ),
-                                        if (schedule['status'] != 'cancelled')
+                                          // Show "Mark Complete" for active trips only
+                                          if (currentStatus == 'active')
+                                            const PopupMenuItem(
+                                              value: 'complete',
+                                              child: Row(
+                                                children: [
+                                                  Icon(
+                                                    Icons.check_circle,
+                                                    size: 16,
+                                                    color: Colors.green,
+                                                  ),
+                                                  SizedBox(width: 8),
+                                                  Text('Mark Complete'),
+                                                ],
+                                              ),
+                                            ),
+                                          // Show "Cancel" for both active AND scheduled trips
+                                          if (currentStatus == 'active' || currentStatus == 'scheduled')
+                                            const PopupMenuItem(
+                                              value: 'cancel',
+                                              child: Row(
+                                                children: [
+                                                  Icon(
+                                                    Icons.cancel,
+                                                    size: 16,
+                                                    color: Colors.red,
+                                                  ),
+                                                  SizedBox(width: 8),
+                                                  Text('Cancel'),
+                                                ],
+                                              ),
+                                            ),
+                                          const PopupMenuDivider(),
                                           const PopupMenuItem(
-                                            value: 'cancel',
+                                            value: 'delete',
                                             child: Row(
                                               children: [
-                                                Icon(Icons.cancel, size: 16, color: Colors.red),
+                                                Icon(
+                                                  Icons.delete,
+                                                  size: 16,
+                                                  color: Colors.red,
+                                                ),
                                                 SizedBox(width: 8),
-                                                Text('Cancel'),
+                                                Text('Delete'),
                                               ],
                                             ),
                                           ),
-                                        if (schedule['status'] != 'active')
-                                          const PopupMenuItem(
-                                            value: 'activate',
-                                            child: Row(
-                                              children: [
-                                                Icon(Icons.play_arrow, size: 16, color: Colors.blue),
-                                                SizedBox(width: 8),
-                                                Text('Activate'),
-                                              ],
-                                            ),
-                                          ),
-                                        const PopupMenuDivider(),
-                                        const PopupMenuItem(
-                                          value: 'delete',
-                                          child: Row(
-                                            children: [
-                                              Icon(Icons.delete, size: 16, color: Colors.red),
-                                              SizedBox(width: 8),
-                                              Text('Delete'),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
+                                        ];
+                                      },
                                     ),
                                   ],
                                 ),
@@ -1137,15 +1195,20 @@ class _AddScheduleDialogState extends State<AddScheduleDialog> {
       // Determine initial status based on date
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
-      final scheduleDay = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day);
-      
+      final scheduleDay = DateTime(
+        _selectedDate!.year,
+        _selectedDate!.month,
+        _selectedDate!.day,
+      );
+
       String initialStatus;
       if (scheduleDay.isAtSameMomentAs(today)) {
         initialStatus = 'active'; // Today's trips are active
       } else if (scheduleDay.isAfter(today)) {
         initialStatus = 'scheduled'; // Future trips are scheduled
       } else {
-        initialStatus = 'active'; // Past dates (shouldn't happen with date picker restrictions)
+        initialStatus =
+            'active'; // Past dates (shouldn't happen with date picker restrictions)
       }
 
       // Create schedule data with status
@@ -1210,9 +1273,7 @@ class _AddScheduleDialogState extends State<AddScheduleDialog> {
                             .map<DropdownMenuItem<String>>(
                               (route) => DropdownMenuItem<String>(
                                 value: route['routeId'] as String,
-                                child: Text(
-                                  route['name'],
-                                ),
+                                child: Text(route['name']),
                               ),
                             )
                             .toList(),
@@ -1262,11 +1323,16 @@ class _AddScheduleDialogState extends State<AddScheduleDialog> {
                         decoration: const InputDecoration(
                           labelText: 'Van (Driver will be auto-assigned)',
                           border: OutlineInputBorder(),
-                          helperText: 'Driver is automatically assigned based on van selection',
+                          helperText:
+                              'Driver is automatically assigned based on van selection',
                         ),
                         value: _selectedVanId,
                         items: _vans
-                            .where((van) => van['status'] == 'Active' && van['driverId'].toString().isNotEmpty)
+                            .where(
+                              (van) =>
+                                  van['status'] == 'Active' &&
+                                  van['driverId'].toString().isNotEmpty,
+                            )
                             .map<DropdownMenuItem<String>>(
                               (van) => DropdownMenuItem<String>(
                                 value: van['id'] as String,
