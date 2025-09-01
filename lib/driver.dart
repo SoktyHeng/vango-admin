@@ -194,7 +194,9 @@ class _DriverPageState extends State<DriverPage> {
         // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Driver $driverName rejected and removed successfully'),
+            content: Text(
+              'Driver $driverName rejected and removed successfully',
+            ),
             backgroundColor: Colors.orange,
             behavior: SnackBarBehavior.floating,
           ),
@@ -355,12 +357,13 @@ class _DriverPageState extends State<DriverPage> {
                 ],
               ),
               const SizedBox(height: 20),
-              
+
               // Profile Image
               CircleAvatar(
                 radius: 40,
                 backgroundColor: const Color(0xFF4E4E94),
-                child: driver['profileImage'] != null &&
+                child:
+                    driver['profileImage'] != null &&
                         driver['profileImage'].toString().isNotEmpty
                     ? ClipOval(
                         child: Image.network(
@@ -384,20 +387,18 @@ class _DriverPageState extends State<DriverPage> {
                               height: 80,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white,
+                                ),
                               ),
                             );
                           },
                         ),
                       )
-                    : const Icon(
-                        Icons.person,
-                        color: Colors.white,
-                        size: 40,
-                      ),
+                    : const Icon(Icons.person, color: Colors.white, size: 40),
               ),
               const SizedBox(height: 16),
-              
+
               Text(
                 driver['name'],
                 style: const TextStyle(
@@ -535,9 +536,9 @@ class _DriverPageState extends State<DriverPage> {
     } catch (e) {
       // Handle login error
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Login failed: $e'))
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Login failed: $e')));
       }
     }
   }

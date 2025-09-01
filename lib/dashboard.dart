@@ -1,6 +1,6 @@
 import 'package:admin_vango/driver.dart';
 import 'package:admin_vango/recurring_schedule_page.dart';
-// import 'package:admin_vango/route_management.dart';
+import 'package:admin_vango/route_management.dart';
 import 'package:admin_vango/trip.dart';
 import 'package:admin_vango/user.dart';
 import 'package:admin_vango/van_management.dart';
@@ -357,10 +357,10 @@ class _DashboardPageState extends State<DashboardPage> {
         return UserPage();
       case 'Drivers':
         return DriverPage();
-      // case 'Route Management':
-      //   return RouteManagementPage();
+      case 'Route Management':
+        return RouteManagementPage();
       case 'Recurring Schedules':
-        return const RecurringScheduleManager();
+        return RecurringScheduleManager();
       case 'Van Management':
         return VanManagementPage();
       default:
@@ -434,9 +434,15 @@ class _DashboardPageState extends State<DashboardPage> {
                     Icons.repeat,
                     _selectedPage == "Recurring Schedules",
                     onTap: () {
-                      setState(
-                        () => _selectedPage = "Recurring Schedules",
-                      ); 
+                      setState(() => _selectedPage = "Recurring Schedules");
+                    },
+                  ),
+                  navItem(
+                    "Route Management",
+                    Icons.map,
+                    _selectedPage == "Route Management",
+                    onTap: () {
+                      setState(() => _selectedPage = "Route Management");
                     },
                   ),
                   navItem(

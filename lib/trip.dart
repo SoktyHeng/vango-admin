@@ -131,6 +131,23 @@ class _TripPageState extends State<TripPage> {
     );
   }
 
+  // SOLUTION 1: Bulk Driver Update Feature
+  Future<void> _showBulkDriverUpdateDialog() async {
+    showDialog(
+      context: context,
+      builder: (context) => BulkDriverUpdateDialog(
+        onUpdateComplete: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Driver assignments updated successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   List<Map<String, dynamic>> _filterSchedules(
     List<Map<String, dynamic>> schedules,
   ) {
@@ -453,7 +470,7 @@ class _TripPageState extends State<TripPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header
+          // Header - UPDATED with Bulk Update Button
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -461,21 +478,42 @@ class _TripPageState extends State<TripPage> {
                 "Trip Management",
                 style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
               ),
-              ElevatedButton.icon(
-                onPressed: _showAddScheduleDialog,
-                icon: const Icon(Icons.add),
-                label: const Text('Add Schedule'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2196F3),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 16,
+              Row(
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: _showBulkDriverUpdateDialog,
+                    icon: const Icon(Icons.sync),
+                    label: const Text('Update Drivers'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 16,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
                   ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    onPressed: _showAddScheduleDialog,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add Schedule'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2196F3),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 16,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
             ],
           ),
@@ -1050,7 +1088,240 @@ class _TripPageState extends State<TripPage> {
   }
 }
 
-// ...existing AddScheduleDialog code remains the same...
+// SOLUTION 1: Bulk Driver Update Dialog
+class BulkDriverUpdateDialog extends StatefulWidget {
+  final VoidCallback onUpdateComplete;
+
+  const BulkDriverUpdateDialog({super.key, required this.onUpdateComplete});
+
+  @override
+  State<BulkDriverUpdateDialog> createState() => _BulkDriverUpdateDialogState();
+}
+
+class _BulkDriverUpdateDialogState extends State<BulkDriverUpdateDialog> {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  bool _isUpdating = false;
+  String _updateMode = 'future_only'; // 'all', 'future_only', 'date_range'
+  DateTimeRange? _dateRange;
+  List<String> _updateLog = [];
+
+  Future<void> _performBulkUpdate() async {
+    setState(() {
+      _isUpdating = true;
+      _updateLog.clear();
+    });
+
+    try {
+      // Get current van-driver mappings
+      final vansSnapshot = await _firestore.collection('vans').get();
+      final Map<String, Map<String, dynamic>> vanDriverMap = {};
+      
+      for (var vanDoc in vansSnapshot.docs) {
+        final vanData = vanDoc.data();
+        final vanId = vanData['vanId'];
+        if (vanId != null) {
+          vanDriverMap[vanId] = {
+            'driverId': vanData['driverId'] ?? '',
+            'driverName': vanData['driverName'] ?? '',
+            'licensePlate': vanData['licensePlate'] ?? '',
+          };
+        }
+      }
+
+      // Get schedules to update based on mode
+      Query scheduleQuery = _firestore.collection('schedules');
+      
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      
+      if (_updateMode == 'future_only') {
+        final todayStr = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+        scheduleQuery = scheduleQuery.where('date', isGreaterThanOrEqualTo: todayStr);
+      } else if (_updateMode == 'date_range' && _dateRange != null) {
+        final startStr = '${_dateRange!.start.year}-${_dateRange!.start.month.toString().padLeft(2, '0')}-${_dateRange!.start.day.toString().padLeft(2, '0')}';
+        final endStr = '${_dateRange!.end.year}-${_dateRange!.end.month.toString().padLeft(2, '0')}-${_dateRange!.end.day.toString().padLeft(2, '0')}';
+        scheduleQuery = scheduleQuery
+            .where('date', isGreaterThanOrEqualTo: startStr)
+            .where('date', isLessThanOrEqualTo: endStr);
+      }
+
+      final schedulesSnapshot = await scheduleQuery.get();
+      int updatedCount = 0;
+      int skippedCount = 0;
+
+      // Update each schedule
+      for (var scheduleDoc in schedulesSnapshot.docs) {
+        final scheduleData = scheduleDoc.data() as Map<String, dynamic>;
+        final vanId = scheduleData['vanId'];
+        
+        if (vanId != null && vanDriverMap.containsKey(vanId)) {
+          final newDriverInfo = vanDriverMap[vanId]!;
+          final currentDriverId = scheduleData['driverId'];
+          
+          // Only update if driver has changed
+          if (currentDriverId != newDriverInfo['driverId']) {
+            await scheduleDoc.reference.update({
+              'driverId': newDriverInfo['driverId'],
+              'driverName': newDriverInfo['driverName'],
+              'vanLicense': newDriverInfo['licensePlate'],
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+            
+            updatedCount++;
+            setState(() {
+              _updateLog.add(
+                'Updated ${scheduleData['date']} ${scheduleData['time']}: ${currentDriverId} → ${newDriverInfo['driverId']}'
+              );
+            });
+          } else {
+            skippedCount++;
+          }
+        }
+      }
+
+      setState(() {
+        _updateLog.add('\n✅ Update complete:');
+        _updateLog.add('- Updated: $updatedCount schedules');
+        _updateLog.add('- Skipped: $skippedCount schedules (no change needed)');
+      });
+
+    } catch (e) {
+      setState(() {
+        _updateLog.add('❌ Error: $e');
+      });
+    } finally {
+      setState(() => _isUpdating = false);
+    }
+  }
+
+  Future<void> _selectDateRange() async {
+    final dateRange = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      initialDateRange: _dateRange,
+    );
+    
+    if (dateRange != null) {
+      setState(() => _dateRange = dateRange);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Bulk Update Driver Assignments'),
+      content: SizedBox(
+        width: 600,
+        height: 500,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'This will sync driver assignments from the current van-driver mappings to existing schedules.',
+              style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 20),
+            
+            const Text(
+              'Update Mode:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            
+            RadioListTile<String>(
+              title: const Text('Future trips only (recommended)'),
+              subtitle: const Text('Only update today and future schedules'),
+              value: 'future_only',
+              groupValue: _updateMode,
+              onChanged: (value) => setState(() => _updateMode = value!),
+            ),
+            
+            RadioListTile<String>(
+              title: const Text('All trips'),
+              subtitle: const Text('Update all schedules (including past ones)'),
+              value: 'all',
+              groupValue: _updateMode,
+              onChanged: (value) => setState(() => _updateMode = value!),
+            ),
+            
+            RadioListTile<String>(
+              title: const Text('Date range'),
+              subtitle: Text(_dateRange != null 
+                  ? 'From ${_dateRange!.start.day}/${_dateRange!.start.month} to ${_dateRange!.end.day}/${_dateRange!.end.month}'
+                  : 'Select date range'),
+              value: 'date_range',
+              groupValue: _updateMode,
+              onChanged: (value) => setState(() => _updateMode = value!),
+            ),
+            
+            if (_updateMode == 'date_range')
+              Padding(
+                padding: const EdgeInsets.only(left: 32),
+                child: ElevatedButton(
+                  onPressed: _selectDateRange,
+                  child: Text(_dateRange != null ? 'Change Date Range' : 'Select Date Range'),
+                ),
+              ),
+            
+            const SizedBox(height: 20),
+            
+            if (_updateLog.isNotEmpty) ...[
+              const Text(
+                'Update Log:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey.shade300),
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: _updateLog.map((log) => Text(
+                        log,
+                        style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                      )).toList(),
+                    ),
+                  ),
+                ),
+              ),
+            ] else
+              const Expanded(child: SizedBox()),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+        ElevatedButton(
+          onPressed: (_isUpdating || (_updateMode == 'date_range' && _dateRange == null)) 
+              ? null 
+              : () async {
+                  await _performBulkUpdate();
+                  if (_updateLog.any((log) => log.contains('✅'))) {
+                    widget.onUpdateComplete();
+                  }
+                },
+          child: _isUpdating 
+              ? const SizedBox(
+                  width: 20, 
+                  height: 20, 
+                  child: CircularProgressIndicator(strokeWidth: 2)
+                )
+              : const Text('Update Driver Assignments'),
+        ),
+      ],
+    );
+  }
+}
 
 // Add Schedule Dialog Widget
 class AddScheduleDialog extends StatefulWidget {
