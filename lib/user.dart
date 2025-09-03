@@ -16,17 +16,58 @@ class _UserPageState extends State<UserPage> {
         .collection('users')
         .snapshots()
         .map(
-          (snapshot) => snapshot.docs.map((doc) {
-            final data = doc.data();
-            return {
-              'id': doc.id,
-              'name': data['name'] ?? '',
-              'email': data['email'] ?? '',
-              'phone': data['phone number'] ?? '',
-              'profileImage': data['profileImage'] ?? '',
-              'createdAt': data['createdAt'],
-            };
-          }).toList(),
+          (snapshot) {
+            List<Map<String, dynamic>> users = snapshot.docs.map((doc) {
+              final data = doc.data();
+              return {
+                'id': doc.id,
+                'name': data['name'] ?? '',
+                'email': data['email'] ?? '',
+                'phone': data['phone number'] ?? '',
+                'profileImage': data['profileImage'] ?? '',
+                'createdAt': data['createdAt'],
+              };
+            }).toList();
+
+            // Sort by createdAt (newest first)
+            users.sort((a, b) {
+              final aDate = a['createdAt'];
+              final bDate = b['createdAt'];
+              
+              // Handle null values - put them at the end
+              if (aDate == null && bDate == null) return 0;
+              if (aDate == null) return 1;
+              if (bDate == null) return -1;
+              
+              try {
+                DateTime dateA;
+                DateTime dateB;
+                
+                if (aDate is Timestamp) {
+                  dateA = aDate.toDate();
+                } else if (aDate is String) {
+                  dateA = DateTime.parse(aDate);
+                } else {
+                  return 1; // Push invalid dates to end
+                }
+                
+                if (bDate is Timestamp) {
+                  dateB = bDate.toDate();
+                } else if (bDate is String) {
+                  dateB = DateTime.parse(bDate);
+                } else {
+                  return -1; // Push invalid dates to end
+                }
+                
+                // Sort newest first (descending)
+                return dateB.compareTo(dateA);
+              } catch (e) {
+                return 0; // Keep original order if parsing fails
+              }
+            });
+
+            return users;
+          },
         );
   }
 

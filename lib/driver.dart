@@ -2,6 +2,7 @@ import 'package:admin_vango/dashboard.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'services/email_service.dart';
 
 class DriverPage extends StatefulWidget {
   const DriverPage({super.key});
@@ -20,22 +21,64 @@ class _DriverPageState extends State<DriverPage> {
         .where('status', isEqualTo: status)
         .snapshots()
         .map(
-          (snapshot) => snapshot.docs.map((doc) {
-            final data = doc.data();
+          (snapshot) {
+            List<Map<String, dynamic>> drivers = snapshot.docs.map((doc) {
+              final data = doc.data();
 
-            return {
-              'id': doc.id,
-              'name': data['name'] ?? '',
-              'email': data['email'] ?? '',
-              'phone': data['phoneNumber'] ?? '',
-              'profileImage': data['profileImage'] ?? '',
-              'licenseImage': data['licenseImage'] ?? '',
-              'licenseNumber': data['licenseNumber'] ?? '',
-              'status': data['status'] ?? '',
-              'createdAt': data['createdAt'],
-              'password': data['password'],
-            };
-          }).toList(),
+              return {
+                'id': doc.id,
+                'name': data['name'] ?? '',
+                'email': data['email'] ?? '',
+                'phone': data['phoneNumber'] ?? '',
+                'profileImage': data['profileImage'] ?? '',
+                'licenseImage': data['licenseImage'] ?? '',
+                'licenseNumber': data['licenseNumber'] ?? '',
+                'status': data['status'] ?? '',
+                'createdAt': data['createdAt'],
+                'password': data['password'],
+                'uid': data['uid'], // Added missing uid field
+              };
+            }).toList();
+
+            // Sort by createdAt (newest first)
+            drivers.sort((a, b) {
+              final aDate = a['createdAt'];
+              final bDate = b['createdAt'];
+              
+              // Handle null values - put them at the end
+              if (aDate == null && bDate == null) return 0;
+              if (aDate == null) return 1;
+              if (bDate == null) return -1;
+              
+              try {
+                DateTime dateA;
+                DateTime dateB;
+                
+                if (aDate is Timestamp) {
+                  dateA = aDate.toDate();
+                } else if (aDate is String) {
+                  dateA = DateTime.parse(aDate);
+                } else {
+                  return 1; // Push invalid dates to end
+                }
+                
+                if (bDate is Timestamp) {
+                  dateB = bDate.toDate();
+                } else if (bDate is String) {
+                  dateB = DateTime.parse(bDate);
+                } else {
+                  return -1; // Push invalid dates to end
+                }
+                
+                // Sort newest first (descending)
+                return dateB.compareTo(dateA);
+              } catch (e) {
+                return 0; // Keep original order if parsing fails
+              }
+            });
+
+            return drivers;
+          },
         );
   }
 
@@ -86,10 +129,9 @@ class _DriverPageState extends State<DriverPage> {
 
     try {
       final docId = driver['id'];
-
-      // Get the driver's email & password from the driver data
       final email = driver['email'];
-      final password = driver['password']; // stored during registration
+      final password = driver['password'];
+      final driverName = driver['name'];
 
       // Validate required fields
       if (email == null || email.isEmpty) {
@@ -99,23 +141,26 @@ class _DriverPageState extends State<DriverPage> {
         throw Exception('Driver password is missing');
       }
 
-      // Log the retrieved data for debugging
-      debugPrint('Driver Email: $email');
-      debugPrint('Driver Password: ${password != null ? '[HIDDEN]' : 'NULL'}');
-
-      // Create Firebase Auth account with email and password
+      // Create Firebase Auth account
       final userCredential = await FirebaseAuth.instance
           .createUserWithEmailAndPassword(email: email, password: password);
 
       final uid = userCredential.user!.uid;
 
-      // Update the driver document with approval data
+      // Update the driver document
       await FirebaseFirestore.instance.collection('drivers').doc(docId).update({
         'status': 'approved',
         'uid': uid,
         'approvedAt': FieldValue.serverTimestamp(),
         'password': FieldValue.delete(), // Remove password for security
       });
+
+      // Send approval email
+      final emailSent = await EmailService.sendApprovalEmail(
+        driverName: driverName,
+        driverEmail: email,
+        loginUrl: 'https://your-driver-app-url.com/login', // Replace with your actual URL
+      );
 
       // Close loading indicator
       if (mounted) {
@@ -124,7 +169,9 @@ class _DriverPageState extends State<DriverPage> {
         // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Driver ${driver['name']} approved successfully'),
+            content: Text(
+              'Driver $driverName approved successfully${emailSent ? ' and notification email sent' : ' but email failed to send'}',
+            ),
             backgroundColor: Colors.green,
             behavior: SnackBarBehavior.floating,
           ),
@@ -148,30 +195,13 @@ class _DriverPageState extends State<DriverPage> {
   }
 
   Future<void> rejectDriver(String docId, String driverName) async {
-    // Show confirmation dialog first
-    final confirm = await showDialog<bool>(
+    // First show dialog to get rejection reason
+    final reason = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Confirm Rejection'),
-        content: Text(
-          'Are you sure you want to reject $driverName? This action cannot be undone.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Reject'),
-          ),
-        ],
-      ),
+      builder: (context) => _RejectDriverDialog(driverName: driverName),
     );
 
-    if (confirm != true) return;
+    if (reason == null) return; // User cancelled
 
     // Show loading indicator
     showDialog(
@@ -181,11 +211,30 @@ class _DriverPageState extends State<DriverPage> {
     );
 
     try {
-      // Option 1: Delete the driver document completely
+      // Get driver data before deleting
+      final driverDoc = await FirebaseFirestore.instance
+          .collection('drivers')
+          .doc(docId)
+          .get();
+
+      final driverData = driverDoc.data();
+      final driverEmail = driverData?['email'] ?? '';
+
+      // Delete the driver document
       await FirebaseFirestore.instance
           .collection('drivers')
           .doc(docId)
           .delete();
+
+      // Send rejection email if email exists
+      bool emailSent = false;
+      if (driverEmail.isNotEmpty) {
+        emailSent = await EmailService.sendRejectionEmail(
+          driverName: driverName,
+          driverEmail: driverEmail,
+          reason: reason,
+        );
+      }
 
       // Close loading indicator
       if (mounted) {
@@ -195,7 +244,7 @@ class _DriverPageState extends State<DriverPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Driver $driverName rejected and removed successfully',
+              'Driver $driverName rejected${emailSent ? ' and notification email sent' : ' but email failed to send'}',
             ),
             backgroundColor: Colors.orange,
             behavior: SnackBarBehavior.floating,
@@ -270,9 +319,9 @@ class _DriverPageState extends State<DriverPage> {
                       fit: BoxFit.contain,
                       width: double.infinity,
                       errorBuilder: (context, error, stackTrace) {
-                        return SizedBox(
+                        return const SizedBox(
                           height: 200,
-                          child: const Column(
+                          child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(
@@ -516,7 +565,7 @@ class _DriverPageState extends State<DriverPage> {
         if (mounted) {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => DashboardPage()),
+            MaterialPageRoute(builder: (context) => const DashboardPage()),
           );
         }
       } else {
@@ -733,7 +782,7 @@ class _DriverPageState extends State<DriverPage> {
             borderRadius: BorderRadius.circular(12),
             boxShadow: [
               BoxShadow(
-                color: Colors.grey.withValues(alpha: 0.1),
+                color: Colors.grey.withOpacity(0.1),
                 blurRadius: 8,
                 offset: const Offset(0, 2),
               ),
@@ -771,7 +820,7 @@ class _DriverPageState extends State<DriverPage> {
               borderRadius: BorderRadius.circular(12),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.grey.withValues(alpha: 0.1),
+                  color: Colors.grey.withOpacity(0.1),
                   blurRadius: 10,
                   offset: const Offset(0, 4),
                 ),
@@ -862,7 +911,7 @@ class _DriverPageState extends State<DriverPage> {
 
                 return SingleChildScrollView(
                   child: DataTable(
-                    columnSpacing: 20, // Match user.dart spacing
+                    columnSpacing: 20,
                     headingRowColor: WidgetStateProperty.all(
                       Colors.grey.shade50,
                     ),
@@ -1052,6 +1101,127 @@ class _DriverPageState extends State<DriverPage> {
               },
             ),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+// Dialog widget for getting rejection reason
+class _RejectDriverDialog extends StatefulWidget {
+  final String driverName;
+
+  const _RejectDriverDialog({required this.driverName});
+
+  @override
+  State<_RejectDriverDialog> createState() => _RejectDriverDialogState();
+}
+
+class _RejectDriverDialogState extends State<_RejectDriverDialog> {
+  final TextEditingController _reasonController = TextEditingController();
+  final List<String> _commonReasons = [
+    'Invalid license documentation',
+    'Incomplete application',
+    'Failed background check',
+    'Does not meet age requirements',
+    'Insufficient driving experience',
+    'Other (please specify below)',
+  ];
+  String? _selectedReason;
+
+  @override
+  void dispose() {
+    _reasonController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Reject ${widget.driverName}'),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Please select or provide a reason for rejection:',
+              style: TextStyle(fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 16),
+            
+            // Common reasons dropdown
+            DropdownButtonFormField<String>(
+              value: _selectedReason,
+              decoration: const InputDecoration(
+                labelText: 'Reason for rejection',
+                border: OutlineInputBorder(),
+              ),
+              items: _commonReasons.map((reason) {
+                return DropdownMenuItem(
+                  value: reason,
+                  child: Text(reason),
+                );
+              }).toList(),
+              onChanged: (value) {
+                setState(() {
+                  _selectedReason = value;
+                });
+              },
+            ),
+            
+            const SizedBox(height: 16),
+            
+            // Custom reason text field (shown when "Other" is selected)
+            if (_selectedReason == 'Other (please specify below)') ...[
+              TextField(
+                controller: _reasonController,
+                decoration: const InputDecoration(
+                  labelText: 'Please specify the reason',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 3,
+              ),
+              const SizedBox(height: 16),
+            ],
+            
+            // Info text
+            Text(
+              'The driver will receive an email notification with this reason.',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _selectedReason != null ? () {
+            String finalReason = _selectedReason!;
+            if (_selectedReason == 'Other (please specify below)') {
+              finalReason = _reasonController.text.trim();
+              if (finalReason.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please specify the reason')),
+                );
+                return;
+              }
+            }
+            Navigator.pop(context, finalReason);
+          } : null,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.red,
+            foregroundColor: Colors.white,
+          ),
+          child: const Text('Reject Driver'),
         ),
       ],
     );

@@ -92,25 +92,61 @@ class _DashboardPageState extends State<DashboardPage> {
     return firestore
         .collection('bookings')
         .orderBy('date', descending: true)
-        .limit(5)
+        .limit(20) // Get more records to sort properly
         .snapshots()
         .asyncMap((snapshot) async {
           List<Map<String, dynamic>> bookings = [];
 
+          // Collect all unique user IDs first
+          Set<String> userIds = {};
           for (var doc in snapshot.docs) {
             final data = doc.data();
+            final userId = data['userId'];
+            if (userId != null && userId.toString().isNotEmpty) {
+              userIds.add(userId);
+            }
+          }
 
-            // Fetch user data
-            String userName = 'Unknown';
+          // Batch fetch all user data at once
+          Map<String, String> userNames = {};
+          if (userIds.isNotEmpty) {
             try {
-              final userDoc = await firestore
-                  .collection('users')
-                  .doc(data['userId'])
-                  .get();
-              userName = userDoc.exists && userDoc.data() != null
-                  ? userDoc.data()!['name'] ?? 'Unknown'
-                  : 'Unknown';
-            } catch (_) {}
+              // Split into chunks of 10 for Firestore 'in' query limit
+              final chunks = <List<String>>[];
+              final userIdsList = userIds.toList();
+              for (int i = 0; i < userIdsList.length; i += 10) {
+                chunks.add(userIdsList.sublist(
+                  i, 
+                  i + 10 > userIdsList.length ? userIdsList.length : i + 10
+                ));
+              }
+
+              // Fetch users in batches
+              for (final chunk in chunks) {
+                final usersSnapshot = await firestore
+                    .collection('users')
+                    .where(FieldPath.documentId, whereIn: chunk)
+                    .get();
+
+                for (var userDoc in usersSnapshot.docs) {
+                  final userData = userDoc.data();
+                  userNames[userDoc.id] = userData['name'] ?? 'Unknown';
+                }
+              }
+            } catch (e) {
+              print('Error batch fetching users: $e');
+            }
+          }
+
+          // Now process bookings with cached user names
+          for (var doc in snapshot.docs) {
+            final data = doc.data();
+            final userId = data['userId'];
+            
+            String userName = 'Unknown';
+            if (userId != null && userNames.containsKey(userId)) {
+              userName = userNames[userId]!;
+            }
 
             final seatList = data['selectedSeats'];
             String seatNumber = '';
@@ -130,8 +166,72 @@ class _DashboardPageState extends State<DashboardPage> {
             });
           }
 
-          return bookings;
+          // Sort by date (descending) and then by time (ascending)
+          bookings.sort((a, b) {
+            // First sort by date (descending - newest dates first)
+            int dateComparison = b['date'].compareTo(a['date']);
+            if (dateComparison != 0) {
+              return dateComparison;
+            }
+            
+            // If dates are the same, sort by time (ascending - earlier times first)
+            return _compareTime(a['time'], b['time']);
+          });
+
+          // Return only the first 5 after sorting
+          return bookings.take(5).toList();
         });
+  }
+
+  // Helper method to compare time strings (e.g., "7:00 AM" vs "9:00 AM")
+  int _compareTime(String timeA, String timeB) {
+    try {
+      // Parse time strings to DateTime for proper comparison
+      final DateTime dateTimeA = _parseTimeString(timeA);
+      final DateTime dateTimeB = _parseTimeString(timeB);
+      
+      return dateTimeA.compareTo(dateTimeB);
+    } catch (e) {
+      // If parsing fails, fall back to string comparison
+      return timeA.compareTo(timeB);
+    }
+  }
+
+  // Helper method to parse time strings like "7:00 AM" to DateTime
+  DateTime _parseTimeString(String timeStr) {
+    if (timeStr.isEmpty) return DateTime(2000, 1, 1, 23, 59); // Default to end of day
+    
+    try {
+      // Remove extra spaces and convert to uppercase
+      final cleanTime = timeStr.trim().toUpperCase();
+      
+      // Split by space to separate time and AM/PM
+      final parts = cleanTime.split(' ');
+      if (parts.length != 2) throw FormatException('Invalid time format');
+      
+      final timePart = parts[0];
+      final meridiem = parts[1];
+      
+      // Split time by colon
+      final timeParts = timePart.split(':');
+      if (timeParts.length != 2) throw FormatException('Invalid time format');
+      
+      int hour = int.parse(timeParts[0]);
+      final minute = int.parse(timeParts[1]);
+      
+      // Convert to 24-hour format
+      if (meridiem == 'PM' && hour != 12) {
+        hour += 12;
+      } else if (meridiem == 'AM' && hour == 12) {
+        hour = 0;
+      }
+      
+      // Return DateTime with today's date but the parsed time
+      return DateTime(2000, 1, 1, hour, minute);
+    } catch (e) {
+      // If parsing fails, return a default time
+      return DateTime(2000, 1, 1, 23, 59);
+    }
   }
 
   String _computeBookingStatus(Map<String, dynamic> data) {

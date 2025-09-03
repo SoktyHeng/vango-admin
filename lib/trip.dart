@@ -42,30 +42,73 @@ class _TripPageState extends State<TripPage> {
     }
   }
 
+  // Add this helper method to parse time strings to comparable values
+  int _parseTimeToMinutes(String timeString) {
+    try {
+      // Handle formats like "7:00 AM", "9:00 AM", "12:30 PM", etc.
+      final parts = timeString.split(' ');
+      if (parts.length != 2) return 0;
+
+      final timePart = parts[0];
+      final amPm = parts[1].toUpperCase();
+
+      final timeSplit = timePart.split(':');
+      if (timeSplit.length != 2) return 0;
+
+      int hour = int.tryParse(timeSplit[0]) ?? 0;
+      final minute = int.tryParse(timeSplit[1]) ?? 0;
+
+      // Convert to 24-hour format
+      if (amPm == 'PM' && hour != 12) {
+        hour += 12;
+      } else if (amPm == 'AM' && hour == 12) {
+        hour = 0;
+      }
+
+      return hour * 60 + minute;
+    } catch (e) {
+      print('Error parsing time: $timeString - $e');
+      return 0;
+    }
+  }
+
   Stream<List<Map<String, dynamic>>> getSchedulesStream() {
     return _firestore
         .collection('schedules')
         .orderBy('date', descending: false)
         .snapshots()
         .map(
-          (snapshot) => snapshot.docs.map((doc) {
-            final data = doc.data();
-            return {
-              'id': doc.id,
-              'routeId': data['routeId'] ?? '',
-              'date': data['date'] ?? '',
-              'time': data['time'] ?? '',
-              'seatsTotal': data['seatsTotal'] ?? 0,
-              'seatsTaken': data['seatsTaken'] ?? [],
-              'driverId': data['driverId'] ?? '',
-              'driverName': data['driverName'] ?? '',
-              'vanId': data['vanId'] ?? '',
-              'vanLicense': data['vanLicense'] ?? '',
-              'status': data['status'] ?? 'active',
-              'createdAt': data['createdAt'],
-              'updatedAt': data['updatedAt'],
-            };
-          }).toList(),
+          (snapshot) =>
+              snapshot.docs.map((doc) {
+                final data = doc.data();
+                return {
+                  'id': doc.id,
+                  'routeId': data['routeId'] ?? '',
+                  'date': data['date'] ?? '',
+                  'time': data['time'] ?? '',
+                  'seatsTotal': data['seatsTotal'] ?? 0,
+                  'seatsTaken': data['seatsTaken'] ?? [],
+                  'driverId': data['driverId'] ?? '',
+                  'driverName': data['driverName'] ?? '',
+                  'vanId': data['vanId'] ?? '',
+                  'vanLicense': data['vanLicense'] ?? '',
+                  'status': data['status'] ?? 'active',
+                  'createdAt': data['createdAt'],
+                  'updatedAt': data['updatedAt'],
+                };
+              }).toList()..sort((a, b) {
+                // First sort by date
+                final dateCompare = a['date'].compareTo(b['date']);
+                if (dateCompare != 0) return dateCompare;
+
+                // If dates are the same, sort by time using proper time parsing
+                final aTime = a['time'] ?? '';
+                final bTime = b['time'] ?? '';
+                final aTimeMinutes = _parseTimeToMinutes(aTime);
+                final bTimeMinutes = _parseTimeToMinutes(bTime);
+
+                return aTimeMinutes.compareTo(bTimeMinutes);
+              }),
         );
   }
 
@@ -372,10 +415,19 @@ class _TripPageState extends State<TripPage> {
   }
 
   void _editSchedule(Map<String, dynamic> schedule) {
-    // Navigate to edit schedule form or show edit dialog
-    // This would be implemented based on your edit requirements
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Edit functionality coming soon!')),
+    showDialog(
+      context: context,
+      builder: (context) => EditScheduleDialog(
+        schedule: schedule,
+        onScheduleUpdated: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Schedule updated successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -1002,8 +1054,9 @@ class _TripPageState extends State<TripPage> {
                                         }
                                       },
                                       itemBuilder: (context) {
-                                        final currentStatus = schedule['status'] ?? 'active';
-                                        
+                                        final currentStatus =
+                                            schedule['status'] ?? 'active';
+
                                         return [
                                           const PopupMenuItem(
                                             value: 'edit',
@@ -1036,7 +1089,8 @@ class _TripPageState extends State<TripPage> {
                                               ),
                                             ),
                                           // Show "Cancel" for both active AND scheduled trips
-                                          if (currentStatus == 'active' || currentStatus == 'scheduled')
+                                          if (currentStatus == 'active' ||
+                                              currentStatus == 'scheduled')
                                             const PopupMenuItem(
                                               value: 'cancel',
                                               child: Row(
@@ -1088,6 +1142,522 @@ class _TripPageState extends State<TripPage> {
   }
 }
 
+// NEW: Edit Schedule Dialog
+class EditScheduleDialog extends StatefulWidget {
+  final Map<String, dynamic> schedule;
+  final VoidCallback onScheduleUpdated;
+
+  const EditScheduleDialog({
+    super.key,
+    required this.schedule,
+    required this.onScheduleUpdated,
+  });
+
+  @override
+  State<EditScheduleDialog> createState() => _EditScheduleDialogState();
+}
+
+class _EditScheduleDialogState extends State<EditScheduleDialog> {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final _formKey = GlobalKey<FormState>();
+
+  String? _selectedRouteId;
+  String? _selectedVanId;
+  DateTime? _selectedDate;
+  TimeOfDay? _selectedTime;
+
+  List<Map<String, dynamic>> _vans = [];
+  List<Map<String, dynamic>> _routes = [];
+  bool _isLoading = false;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeFields();
+    _loadData();
+  }
+
+  void _initializeFields() {
+    // Initialize with existing schedule data
+    _selectedRouteId = widget.schedule['routeId'];
+
+    // Parse date
+    final dateStr = widget.schedule['date'];
+    try {
+      _selectedDate = DateTime.parse(dateStr);
+    } catch (e) {
+      _selectedDate = DateTime.now();
+    }
+
+    // Parse time
+    final timeStr = widget.schedule['time'];
+    _selectedTime = _parseTimeOfDay(timeStr);
+
+    // Van will be set after loading vans data
+    _selectedVanId = widget.schedule['vanId'];
+  }
+
+  TimeOfDay _parseTimeOfDay(String timeString) {
+    try {
+      // Handle formats like "7:00 AM", "9:00 AM", "12:30 PM", etc.
+      final parts = timeString.split(' ');
+      if (parts.length != 2) return TimeOfDay.now();
+
+      final timePart = parts[0];
+      final amPm = parts[1].toUpperCase();
+
+      final timeSplit = timePart.split(':');
+      if (timeSplit.length != 2) return TimeOfDay.now();
+
+      int hour = int.tryParse(timeSplit[0]) ?? 0;
+      final minute = int.tryParse(timeSplit[1]) ?? 0;
+
+      // Convert to 24-hour format
+      if (amPm == 'PM' && hour != 12) {
+        hour += 12;
+      } else if (amPm == 'AM' && hour == 12) {
+        hour = 0;
+      }
+
+      return TimeOfDay(hour: hour, minute: minute);
+    } catch (e) {
+      return TimeOfDay.now();
+    }
+  }
+
+  Future<void> _loadData() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final vansSnapshot = await _firestore.collection('vans').get();
+      final routesSnapshot = await _firestore.collection('routes').get();
+
+      _vans = vansSnapshot.docs.map((doc) {
+        final data = doc.data();
+        return {
+          'id': doc.id,
+          'vanId': data['vanId'] ?? doc.id,
+          'licensePlate': data['licensePlate'] ?? 'Unknown License',
+          'capacity': data['capacity'] ?? 12,
+          'status': data['status'] ?? 'Active',
+          'driverId': data['driverId'] ?? '',
+          'driverName': data['driverName'] ?? '',
+        };
+      }).toList();
+
+      _routes = routesSnapshot.docs.map((doc) {
+        final data = doc.data();
+        return {
+          'id': doc.id,
+          'routeId': data['routeId'] ?? doc.id,
+          'from': data['from'] ?? '',
+          'to': data['to'] ?? '',
+          'pricePerSeat': data['pricePerSeat'] ?? 0,
+          'name': '${data['from'] ?? ''} → ${data['to'] ?? ''}',
+        };
+      }).toList();
+
+      // Find the van document ID based on vanId
+      final currentVan = _vans.firstWhere(
+        (van) => van['vanId'] == widget.schedule['vanId'],
+        orElse: () => {},
+      );
+      if (currentVan.isNotEmpty) {
+        _selectedVanId = currentVan['id'];
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error loading data: $e')));
+      }
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _selectDate() async {
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? DateTime.now(),
+      firstDate: DateTime.now().subtract(const Duration(days: 30)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (date != null) {
+      setState(() => _selectedDate = date);
+    }
+  }
+
+  Future<void> _selectTime() async {
+    final time = await showTimePicker(
+      context: context,
+      initialTime: _selectedTime ?? TimeOfDay.now(),
+    );
+    if (time != null) {
+      setState(() => _selectedTime = time);
+    }
+  }
+
+  String _formatTime(TimeOfDay time) {
+    final hour = time.hour == 0
+        ? 12
+        : time.hour > 12
+        ? time.hour - 12
+        : time.hour;
+    final minute = time.minute.toString().padLeft(2, '0');
+    final period = time.hour >= 12 ? 'PM' : 'AM';
+    return '$hour:$minute $period';
+  }
+
+  Future<void> _updateSchedule() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    if (_selectedRouteId == null ||
+        _selectedVanId == null ||
+        _selectedDate == null ||
+        _selectedTime == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill in all fields')),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      // Get van details
+      final vanDoc = await _firestore
+          .collection('vans')
+          .doc(_selectedVanId)
+          .get();
+
+      final vanData = vanDoc.data();
+
+      if (vanData == null) {
+        throw Exception('Van data not found');
+      }
+
+      // Check if van has an assigned driver
+      final driverId = vanData['driverId'] ?? '';
+      final driverName = vanData['driverName'] ?? '';
+
+      if (driverId.isEmpty) {
+        throw Exception('Selected van does not have an assigned driver');
+      }
+
+      // Determine status based on date
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final scheduleDay = DateTime(
+        _selectedDate!.year,
+        _selectedDate!.month,
+        _selectedDate!.day,
+      );
+
+      String status;
+      if (scheduleDay.isAtSameMomentAs(today)) {
+        status = 'active'; // Today's trips are active
+      } else if (scheduleDay.isAfter(today)) {
+        status = 'scheduled'; // Future trips are scheduled
+      } else {
+        status = 'completed'; // Past trips are considered completed
+      }
+
+      // Update schedule data
+      final updatedData = {
+        'routeId': _selectedRouteId,
+        'date':
+            '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}',
+        'time': _formatTime(_selectedTime!),
+        'seatsTotal': vanData['capacity'] ?? 12,
+        'driverId': driverId,
+        'driverName': driverName,
+        'vanId': vanData['vanId'] ?? _selectedVanId,
+        'vanLicense': vanData['licensePlate'] ?? 'Unknown License',
+        'status': status,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      await _firestore
+          .collection('schedules')
+          .doc(widget.schedule['id'])
+          .update(updatedData);
+
+      if (mounted) {
+        Navigator.pop(context);
+        widget.onScheduleUpdated();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error updating schedule: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      setState(() => _isSaving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Edit Schedule'),
+      content: SizedBox(
+        width: 500,
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : Form(
+                key: _formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Current Schedule Info
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.blue.shade200),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Current Schedule:',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.blue.shade700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${widget.schedule['date']} at ${widget.schedule['time']}',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.blue.shade800,
+                              ),
+                            ),
+                            Text(
+                              'Route: ${widget.schedule['routeId']} | Van: ${widget.schedule['vanId']} | Driver: ${widget.schedule['driverName']}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.blue.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      // Route Selection
+                      DropdownButtonFormField<String>(
+                        decoration: const InputDecoration(
+                          labelText: 'Route',
+                          border: OutlineInputBorder(),
+                        ),
+                        value: _selectedRouteId,
+                        items: _routes
+                            .map<DropdownMenuItem<String>>(
+                              (route) => DropdownMenuItem<String>(
+                                value: route['routeId'] as String,
+                                child: Text(route['name']),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) =>
+                            setState(() => _selectedRouteId = value),
+                        validator: (value) =>
+                            value == null ? 'Please select a route' : null,
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Date Selection
+                      InkWell(
+                        onTap: _selectDate,
+                        child: InputDecorator(
+                          decoration: const InputDecoration(
+                            labelText: 'Date',
+                            border: OutlineInputBorder(),
+                          ),
+                          child: Text(
+                            _selectedDate == null
+                                ? 'Select date'
+                                : '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Time Selection
+                      InkWell(
+                        onTap: _selectTime,
+                        child: InputDecorator(
+                          decoration: const InputDecoration(
+                            labelText: 'Time',
+                            border: OutlineInputBorder(),
+                          ),
+                          child: Text(
+                            _selectedTime == null
+                                ? 'Select time'
+                                : _formatTime(_selectedTime!),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Van Selection with Driver Info
+                      DropdownButtonFormField<String>(
+                        decoration: const InputDecoration(
+                          labelText: 'Van (Driver will be auto-assigned)',
+                          border: OutlineInputBorder(),
+                          helperText:
+                              'Driver is automatically assigned based on van selection',
+                        ),
+                        value: _selectedVanId,
+                        items: _vans
+                            .where(
+                              (van) =>
+                                  van['status'] == 'Active' &&
+                                  van['driverId'].toString().isNotEmpty,
+                            )
+                            .map<DropdownMenuItem<String>>(
+                              (van) => DropdownMenuItem<String>(
+                                value: van['id'] as String,
+                                child: Text(
+                                  '${van['vanId']} - ${van['licensePlate']} (${van['capacity']} seats) - Driver: ${van['driverName']}',
+                                  style: const TextStyle(fontSize: 14),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) =>
+                            setState(() => _selectedVanId = value),
+                        validator: (value) =>
+                            value == null ? 'Please select a van' : null,
+                      ),
+
+                      // Show selected driver info
+                      if (_selectedVanId != null) ...[
+                        const SizedBox(height: 16),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.green.shade200),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Updated Driver Assignment:',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.green.shade700,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _vans.firstWhere(
+                                  (van) => van['id'] == _selectedVanId,
+                                  orElse: () => {'driverName': 'Unknown'},
+                                )['driverName'],
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.green.shade800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+
+                      // Seats warning if there are existing bookings
+                      if ((widget.schedule['seatsTaken'] as List)
+                          .isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.orange.shade300),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.warning,
+                                    size: 16,
+                                    color: Colors.orange.shade700,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Existing Bookings Warning',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.orange.shade700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'This schedule has ${(widget.schedule['seatsTaken'] as List).length} booked seats. Changes may affect passenger bookings.',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.orange.shade600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSaving ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _isSaving ? null : _updateSchedule,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.orange,
+            foregroundColor: Colors.white,
+          ),
+          child: _isSaving
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Update Schedule'),
+        ),
+      ],
+    );
+  }
+}
+
 // SOLUTION 1: Bulk Driver Update Dialog
 class BulkDriverUpdateDialog extends StatefulWidget {
   final VoidCallback onUpdateComplete;
@@ -1115,7 +1685,7 @@ class _BulkDriverUpdateDialogState extends State<BulkDriverUpdateDialog> {
       // Get current van-driver mappings
       final vansSnapshot = await _firestore.collection('vans').get();
       final Map<String, Map<String, dynamic>> vanDriverMap = {};
-      
+
       for (var vanDoc in vansSnapshot.docs) {
         final vanData = vanDoc.data();
         final vanId = vanData['vanId'];
@@ -1130,16 +1700,22 @@ class _BulkDriverUpdateDialogState extends State<BulkDriverUpdateDialog> {
 
       // Get schedules to update based on mode
       Query scheduleQuery = _firestore.collection('schedules');
-      
+
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
-      
+
       if (_updateMode == 'future_only') {
-        final todayStr = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
-        scheduleQuery = scheduleQuery.where('date', isGreaterThanOrEqualTo: todayStr);
+        final todayStr =
+            '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+        scheduleQuery = scheduleQuery.where(
+          'date',
+          isGreaterThanOrEqualTo: todayStr,
+        );
       } else if (_updateMode == 'date_range' && _dateRange != null) {
-        final startStr = '${_dateRange!.start.year}-${_dateRange!.start.month.toString().padLeft(2, '0')}-${_dateRange!.start.day.toString().padLeft(2, '0')}';
-        final endStr = '${_dateRange!.end.year}-${_dateRange!.end.month.toString().padLeft(2, '0')}-${_dateRange!.end.day.toString().padLeft(2, '0')}';
+        final startStr =
+            '${_dateRange!.start.year}-${_dateRange!.start.month.toString().padLeft(2, '0')}-${_dateRange!.start.day.toString().padLeft(2, '0')}';
+        final endStr =
+            '${_dateRange!.end.year}-${_dateRange!.end.month.toString().padLeft(2, '0')}-${_dateRange!.end.day.toString().padLeft(2, '0')}';
         scheduleQuery = scheduleQuery
             .where('date', isGreaterThanOrEqualTo: startStr)
             .where('date', isLessThanOrEqualTo: endStr);
@@ -1153,11 +1729,11 @@ class _BulkDriverUpdateDialogState extends State<BulkDriverUpdateDialog> {
       for (var scheduleDoc in schedulesSnapshot.docs) {
         final scheduleData = scheduleDoc.data() as Map<String, dynamic>;
         final vanId = scheduleData['vanId'];
-        
+
         if (vanId != null && vanDriverMap.containsKey(vanId)) {
           final newDriverInfo = vanDriverMap[vanId]!;
           final currentDriverId = scheduleData['driverId'];
-          
+
           // Only update if driver has changed
           if (currentDriverId != newDriverInfo['driverId']) {
             await scheduleDoc.reference.update({
@@ -1166,11 +1742,11 @@ class _BulkDriverUpdateDialogState extends State<BulkDriverUpdateDialog> {
               'vanLicense': newDriverInfo['licensePlate'],
               'updatedAt': FieldValue.serverTimestamp(),
             });
-            
+
             updatedCount++;
             setState(() {
               _updateLog.add(
-                'Updated ${scheduleData['date']} ${scheduleData['time']}: ${currentDriverId} → ${newDriverInfo['driverId']}'
+                'Updated ${scheduleData['date']} ${scheduleData['time']}: ${currentDriverId} → ${newDriverInfo['driverId']}',
               );
             });
           } else {
@@ -1184,7 +1760,6 @@ class _BulkDriverUpdateDialogState extends State<BulkDriverUpdateDialog> {
         _updateLog.add('- Updated: $updatedCount schedules');
         _updateLog.add('- Skipped: $skippedCount schedules (no change needed)');
       });
-
     } catch (e) {
       setState(() {
         _updateLog.add('❌ Error: $e');
@@ -1201,7 +1776,7 @@ class _BulkDriverUpdateDialogState extends State<BulkDriverUpdateDialog> {
       lastDate: DateTime.now().add(const Duration(days: 365)),
       initialDateRange: _dateRange,
     );
-    
+
     if (dateRange != null) {
       setState(() => _dateRange = dateRange);
     }
@@ -1222,13 +1797,13 @@ class _BulkDriverUpdateDialogState extends State<BulkDriverUpdateDialog> {
               style: TextStyle(color: Colors.grey),
             ),
             const SizedBox(height: 20),
-            
+
             const Text(
               'Update Mode:',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            
+
             RadioListTile<String>(
               title: const Text('Future trips only (recommended)'),
               subtitle: const Text('Only update today and future schedules'),
@@ -1236,36 +1811,44 @@ class _BulkDriverUpdateDialogState extends State<BulkDriverUpdateDialog> {
               groupValue: _updateMode,
               onChanged: (value) => setState(() => _updateMode = value!),
             ),
-            
+
             RadioListTile<String>(
               title: const Text('All trips'),
-              subtitle: const Text('Update all schedules (including past ones)'),
+              subtitle: const Text(
+                'Update all schedules (including past ones)',
+              ),
               value: 'all',
               groupValue: _updateMode,
               onChanged: (value) => setState(() => _updateMode = value!),
             ),
-            
+
             RadioListTile<String>(
               title: const Text('Date range'),
-              subtitle: Text(_dateRange != null 
-                  ? 'From ${_dateRange!.start.day}/${_dateRange!.start.month} to ${_dateRange!.end.day}/${_dateRange!.end.month}'
-                  : 'Select date range'),
+              subtitle: Text(
+                _dateRange != null
+                    ? 'From ${_dateRange!.start.day}/${_dateRange!.start.month} to ${_dateRange!.end.day}/${_dateRange!.end.month}'
+                    : 'Select date range',
+              ),
               value: 'date_range',
               groupValue: _updateMode,
               onChanged: (value) => setState(() => _updateMode = value!),
             ),
-            
+
             if (_updateMode == 'date_range')
               Padding(
                 padding: const EdgeInsets.only(left: 32),
                 child: ElevatedButton(
                   onPressed: _selectDateRange,
-                  child: Text(_dateRange != null ? 'Change Date Range' : 'Select Date Range'),
+                  child: Text(
+                    _dateRange != null
+                        ? 'Change Date Range'
+                        : 'Select Date Range',
+                  ),
                 ),
               ),
-            
+
             const SizedBox(height: 20),
-            
+
             if (_updateLog.isNotEmpty) ...[
               const Text(
                 'Update Log:',
@@ -1283,10 +1866,17 @@ class _BulkDriverUpdateDialogState extends State<BulkDriverUpdateDialog> {
                   child: SingleChildScrollView(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: _updateLog.map((log) => Text(
-                        log,
-                        style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-                      )).toList(),
+                      children: _updateLog
+                          .map(
+                            (log) => Text(
+                              log,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                          )
+                          .toList(),
                     ),
                   ),
                 ),
@@ -1302,19 +1892,21 @@ class _BulkDriverUpdateDialogState extends State<BulkDriverUpdateDialog> {
           child: const Text('Close'),
         ),
         ElevatedButton(
-          onPressed: (_isUpdating || (_updateMode == 'date_range' && _dateRange == null)) 
-              ? null 
+          onPressed:
+              (_isUpdating ||
+                  (_updateMode == 'date_range' && _dateRange == null))
+              ? null
               : () async {
                   await _performBulkUpdate();
                   if (_updateLog.any((log) => log.contains('✅'))) {
                     widget.onUpdateComplete();
                   }
                 },
-          child: _isUpdating 
+          child: _isUpdating
               ? const SizedBox(
-                  width: 20, 
-                  height: 20, 
-                  child: CircularProgressIndicator(strokeWidth: 2)
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Text('Update Driver Assignments'),
         ),

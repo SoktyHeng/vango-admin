@@ -47,6 +47,58 @@ class _VanManagementPageState extends State<VanManagementPage> {
       return 'van${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}';
     }
   }
+
+  // Stream with sorting applied
+  Stream<List<Map<String, dynamic>>> getVansStream() {
+    return _firestore.collection('vans').snapshots().map((snapshot) {
+      List<Map<String, dynamic>> vans = snapshot.docs.map((doc) {
+        final data = doc.data();
+        return {
+          'docId': doc.id,
+          ...data,
+        };
+      }).toList();
+
+      // Sort by createdAt (newest first)
+      vans.sort((a, b) {
+        final aDate = a['createdAt'];
+        final bDate = b['createdAt'];
+        
+        // Handle null values - put them at the end
+        if (aDate == null && bDate == null) return 0;
+        if (aDate == null) return 1;
+        if (bDate == null) return -1;
+        
+        try {
+          DateTime dateA;
+          DateTime dateB;
+          
+          if (aDate is Timestamp) {
+            dateA = aDate.toDate();
+          } else if (aDate is String) {
+            dateA = DateTime.parse(aDate);
+          } else {
+            return 1; // Push invalid dates to end
+          }
+          
+          if (bDate is Timestamp) {
+            dateB = bDate.toDate();
+          } else if (bDate is String) {
+            dateB = DateTime.parse(bDate);
+          } else {
+            return -1; // Push invalid dates to end
+          }
+          
+          // Sort newest first (descending)
+          return dateB.compareTo(dateA);
+        } catch (e) {
+          return 0; // Keep original order if parsing fails
+        }
+      });
+
+      return vans;
+    });
+  }
   
   @override
   Widget build(BuildContext context) {
@@ -87,8 +139,8 @@ class _VanManagementPageState extends State<VanManagementPage> {
                 ),
               ],
             ),
-            child: StreamBuilder<QuerySnapshot>(
-              stream: _firestore.collection('vans').snapshots(),
+            child: StreamBuilder<List<Map<String, dynamic>>>(
+              stream: getVansStream(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -100,7 +152,7 @@ class _VanManagementPageState extends State<VanManagementPage> {
                   );
                 }
 
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                if (!snapshot.hasData || snapshot.data!.isEmpty) {
                   return const Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -139,13 +191,12 @@ class _VanManagementPageState extends State<VanManagementPage> {
                       DataColumn(label: Text('Status')),
                       DataColumn(label: Text('Actions')),
                     ],
-                    rows: snapshot.data!.docs.map((doc) {
-                      final data = doc.data() as Map<String, dynamic>;
+                    rows: snapshot.data!.map((data) {
                       return DataRow(
                         cells: [
                           DataCell(
                             Text(
-                              data['vanId'] ?? doc.id,
+                              data['vanId'] ?? data['docId'],
                               style: const TextStyle(
                                 fontWeight: FontWeight.w600,
                                 color: Color(0xFF2D3748),
@@ -209,7 +260,7 @@ class _VanManagementPageState extends State<VanManagementPage> {
                                     color: Colors.blue,
                                     size: 20,
                                   ),
-                                  onPressed: () => _showEditVanDialog(doc.id, data),
+                                  onPressed: () => _showEditVanDialog(data['docId'], data),
                                   tooltip: 'Edit Van',
                                 ),
                                 IconButton(
@@ -218,7 +269,7 @@ class _VanManagementPageState extends State<VanManagementPage> {
                                     color: Colors.red,
                                     size: 20,
                                   ),
-                                  onPressed: () => _showDeleteConfirmation(doc.id),
+                                  onPressed: () => _showDeleteConfirmation(data['docId']),
                                   tooltip: 'Delete Van',
                                 ),
                               ],
