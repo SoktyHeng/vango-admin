@@ -1673,7 +1673,7 @@ class _BulkDriverUpdateDialogState extends State<BulkDriverUpdateDialog> {
   bool _isUpdating = false;
   String _updateMode = 'future_only'; // 'all', 'future_only', 'date_range'
   DateTimeRange? _dateRange;
-  List<String> _updateLog = [];
+  final List<String> _updateLog = [];
 
   Future<void> _performBulkUpdate() async {
     setState(() {
@@ -1746,7 +1746,7 @@ class _BulkDriverUpdateDialogState extends State<BulkDriverUpdateDialog> {
             updatedCount++;
             setState(() {
               _updateLog.add(
-                'Updated ${scheduleData['date']} ${scheduleData['time']}: ${currentDriverId} → ${newDriverInfo['driverId']}',
+                'Updated ${scheduleData['date']} ${scheduleData['time']}: $currentDriverId → ${newDriverInfo['driverId']}',
               );
             });
           } else {

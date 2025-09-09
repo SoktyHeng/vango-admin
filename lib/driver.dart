@@ -2,7 +2,6 @@ import 'package:admin_vango/dashboard.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'services/email_service.dart';
 
 class DriverPage extends StatefulWidget {
   const DriverPage({super.key});
@@ -20,66 +19,64 @@ class _DriverPageState extends State<DriverPage> {
         .collection('drivers')
         .where('status', isEqualTo: status)
         .snapshots()
-        .map(
-          (snapshot) {
-            List<Map<String, dynamic>> drivers = snapshot.docs.map((doc) {
-              final data = doc.data();
+        .map((snapshot) {
+          List<Map<String, dynamic>> drivers = snapshot.docs.map((doc) {
+            final data = doc.data();
 
-              return {
-                'id': doc.id,
-                'name': data['name'] ?? '',
-                'email': data['email'] ?? '',
-                'phone': data['phoneNumber'] ?? '',
-                'profileImage': data['profileImage'] ?? '',
-                'licenseImage': data['licenseImage'] ?? '',
-                'licenseNumber': data['licenseNumber'] ?? '',
-                'status': data['status'] ?? '',
-                'createdAt': data['createdAt'],
-                'password': data['password'],
-                'uid': data['uid'], // Added missing uid field
-              };
-            }).toList();
+            return {
+              'id': doc.id,
+              'name': data['name'] ?? '',
+              'email': data['email'] ?? '',
+              'phone': data['phoneNumber'] ?? '',
+              'profileImage': data['profileImage'] ?? '',
+              'licenseImage': data['licenseImage'] ?? '',
+              'licenseNumber': data['licenseNumber'] ?? '',
+              'status': data['status'] ?? '',
+              'createdAt': data['createdAt'],
+              'password': data['password'],
+              'uid': data['uid'], // Added missing uid field
+            };
+          }).toList();
 
-            // Sort by createdAt (newest first)
-            drivers.sort((a, b) {
-              final aDate = a['createdAt'];
-              final bDate = b['createdAt'];
-              
-              // Handle null values - put them at the end
-              if (aDate == null && bDate == null) return 0;
-              if (aDate == null) return 1;
-              if (bDate == null) return -1;
-              
-              try {
-                DateTime dateA;
-                DateTime dateB;
-                
-                if (aDate is Timestamp) {
-                  dateA = aDate.toDate();
-                } else if (aDate is String) {
-                  dateA = DateTime.parse(aDate);
-                } else {
-                  return 1; // Push invalid dates to end
-                }
-                
-                if (bDate is Timestamp) {
-                  dateB = bDate.toDate();
-                } else if (bDate is String) {
-                  dateB = DateTime.parse(bDate);
-                } else {
-                  return -1; // Push invalid dates to end
-                }
-                
-                // Sort newest first (descending)
-                return dateB.compareTo(dateA);
-              } catch (e) {
-                return 0; // Keep original order if parsing fails
+          // Sort by createdAt (newest first)
+          drivers.sort((a, b) {
+            final aDate = a['createdAt'];
+            final bDate = b['createdAt'];
+
+            // Handle null values - put them at the end
+            if (aDate == null && bDate == null) return 0;
+            if (aDate == null) return 1;
+            if (bDate == null) return -1;
+
+            try {
+              DateTime dateA;
+              DateTime dateB;
+
+              if (aDate is Timestamp) {
+                dateA = aDate.toDate();
+              } else if (aDate is String) {
+                dateA = DateTime.parse(aDate);
+              } else {
+                return 1; // Push invalid dates to end
               }
-            });
 
-            return drivers;
-          },
-        );
+              if (bDate is Timestamp) {
+                dateB = bDate.toDate();
+              } else if (bDate is String) {
+                dateB = DateTime.parse(bDate);
+              } else {
+                return -1; // Push invalid dates to end
+              }
+
+              // Sort newest first (descending)
+              return dateB.compareTo(dateA);
+            } catch (e) {
+              return 0; // Keep original order if parsing fails
+            }
+          });
+
+          return drivers;
+        });
   }
 
   List<Map<String, dynamic>> _filterDrivers(
@@ -155,23 +152,13 @@ class _DriverPageState extends State<DriverPage> {
         'password': FieldValue.delete(), // Remove password for security
       });
 
-      // Send approval email
-      final emailSent = await EmailService.sendApprovalEmail(
-        driverName: driverName,
-        driverEmail: email,
-        loginUrl: 'https://your-driver-app-url.com/login', // Replace with your actual URL
-      );
-
       // Close loading indicator
       if (mounted) {
         Navigator.pop(context);
-
         // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              'Driver $driverName approved successfully${emailSent ? ' and notification email sent' : ' but email failed to send'}',
-            ),
+            content: Text('Driver $driverName approved successfully'),
             backgroundColor: Colors.green,
             behavior: SnackBarBehavior.floating,
           ),
@@ -211,41 +198,20 @@ class _DriverPageState extends State<DriverPage> {
     );
 
     try {
-      // Get driver data before deleting
-      final driverDoc = await FirebaseFirestore.instance
-          .collection('drivers')
-          .doc(docId)
-          .get();
-
-      final driverData = driverDoc.data();
-      final driverEmail = driverData?['email'] ?? '';
-
-      // Delete the driver document
-      await FirebaseFirestore.instance
-          .collection('drivers')
-          .doc(docId)
-          .delete();
-
-      // Send rejection email if email exists
-      bool emailSent = false;
-      if (driverEmail.isNotEmpty) {
-        emailSent = await EmailService.sendRejectionEmail(
-          driverName: driverName,
-          driverEmail: driverEmail,
-          reason: reason,
-        );
-      }
+      // Update the driver document with rejected status and reason
+      await FirebaseFirestore.instance.collection('drivers').doc(docId).update({
+        'status': 'rejected',
+        'reason': reason,
+        'rejectedAt': FieldValue.serverTimestamp(),
+      });
 
       // Close loading indicator
       if (mounted) {
         Navigator.pop(context);
-
         // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              'Driver $driverName rejected${emailSent ? ' and notification email sent' : ' but email failed to send'}',
-            ),
+            content: Text('Driver $driverName rejected'),
             backgroundColor: Colors.orange,
             behavior: SnackBarBehavior.floating,
           ),
@@ -1150,7 +1116,7 @@ class _RejectDriverDialogState extends State<_RejectDriverDialog> {
               style: TextStyle(fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 16),
-            
+
             // Common reasons dropdown
             DropdownButtonFormField<String>(
               value: _selectedReason,
@@ -1159,10 +1125,7 @@ class _RejectDriverDialogState extends State<_RejectDriverDialog> {
                 border: OutlineInputBorder(),
               ),
               items: _commonReasons.map((reason) {
-                return DropdownMenuItem(
-                  value: reason,
-                  child: Text(reason),
-                );
+                return DropdownMenuItem(value: reason, child: Text(reason));
               }).toList(),
               onChanged: (value) {
                 setState(() {
@@ -1170,9 +1133,9 @@ class _RejectDriverDialogState extends State<_RejectDriverDialog> {
                 });
               },
             ),
-            
+
             const SizedBox(height: 16),
-            
+
             // Custom reason text field (shown when "Other" is selected)
             if (_selectedReason == 'Other (please specify below)') ...[
               TextField(
@@ -1185,7 +1148,7 @@ class _RejectDriverDialogState extends State<_RejectDriverDialog> {
               ),
               const SizedBox(height: 16),
             ],
-            
+
             // Info text
             Text(
               'The driver will receive an email notification with this reason.',
@@ -1204,19 +1167,23 @@ class _RejectDriverDialogState extends State<_RejectDriverDialog> {
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: _selectedReason != null ? () {
-            String finalReason = _selectedReason!;
-            if (_selectedReason == 'Other (please specify below)') {
-              finalReason = _reasonController.text.trim();
-              if (finalReason.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please specify the reason')),
-                );
-                return;
-              }
-            }
-            Navigator.pop(context, finalReason);
-          } : null,
+          onPressed: _selectedReason != null
+              ? () {
+                  String finalReason = _selectedReason!;
+                  if (_selectedReason == 'Other (please specify below)') {
+                    finalReason = _reasonController.text.trim();
+                    if (finalReason.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Please specify the reason'),
+                        ),
+                      );
+                      return;
+                    }
+                  }
+                  Navigator.pop(context, finalReason);
+                }
+              : null,
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.red,
             foregroundColor: Colors.white,
