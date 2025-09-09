@@ -561,7 +561,7 @@ class _VanFormDialogState extends State<VanFormDialog> {
                               ],
                             ),
                           );
-                        }).toList(),
+                        }),
                       ],
                       onChanged: (value) {
                         setState(() {

@@ -1,32 +1,72 @@
-/**
- * Import function triggers from their respective submodules:
- *
- * const {onCall} = require("firebase-functions/v2/https");
- * const {onDocumentWritten} = require("firebase-functions/v2/firestore");
- *
- * See a full list of supported triggers at https://firebase.google.com/docs/functions
- */
-
+const {onDocumentWritten} = require("firebase-functions/v2/firestore");
 const {setGlobalOptions} = require("firebase-functions");
-const {onRequest} = require("firebase-functions/https");
-const logger = require("firebase-functions/logger");
+const admin = require("firebase-admin");
+const sgMail = require("@sendgrid/mail");
 
-// For cost control, you can set the maximum number of containers that can be
-// running at the same time. This helps mitigate the impact of unexpected
-// traffic spikes by instead downgrading performance. This limit is a
-// per-function limit. You can override the limit for each function using the
-// `maxInstances` option in the function's options, e.g.
-// `onRequest({ maxInstances: 5 }, (req, res) => { ... })`.
-// NOTE: setGlobalOptions does not apply to functions using the v1 API. V1
-// functions should each use functions.runWith({ maxInstances: 10 }) instead.
-// In the v1 API, each function can only serve one request per container, so
-// this will be the maximum concurrent request count.
-setGlobalOptions({ maxInstances: 10 });
+admin.initializeApp();
 
-// Create and deploy your first functions
-// https://firebase.google.com/docs/functions/get-started
+const SENDGRID_API_KEY = process.env.SENDGRID_KEY ||
+  require("firebase-functions").config().sendgrid.key;
 
-// exports.helloWorld = onRequest((request, response) => {
-//   logger.info("Hello logs!", {structuredData: true});
-//   response.send("Hello from Firebase!");
-// });
+sgMail.setApiKey(SENDGRID_API_KEY);
+
+setGlobalOptions({maxInstances: 10});
+
+exports.sendDriverStatusEmail = onDocumentWritten(
+    "drivers/{driverId}",
+    async (event) => {
+      const before = event.data.before.data();
+      const after = event.data.after.data();
+
+      if (!before || !after || before.status === after.status) return null;
+
+      const {email, name} = after;
+      const time = new Date().toLocaleString();
+
+      try {
+        if (after.status === "approved") {
+          const msg = {
+            to: email,
+            from: "johnyly168@gmail.com",
+            subject: "Your VanGo Application Has Been Approved!",
+            html: `
+            <p>Hi <strong>${name}</strong>,</p>
+            <p>Congratulations! Your application to join 
+            <strong>VanGo</strong> has been <strong>approved</strong>.</p>
+            <p>You can now log in and start using your account.</p>
+            <p>Approved on ${time}</p>
+            <p>Welcome aboard, and thank you for joining 
+            <strong>VanGo</strong>!</p>
+          `,
+          };
+          await sgMail.send(msg);
+          console.log("✅ Approval email sent to", email);
+        } else if (after.status === "rejected") {
+          const reason = after.reason || "No reason provided";
+          const msg = {
+            to: email,
+            from: "johnyly168@gmail.com",
+            subject: "Your VanGo Application Has Been Rejected",
+            html: `
+            <p>Hi <strong>${name}</strong>,</p>
+            <p>We regret to inform you that your application to 
+            join <strong>VanGo</strong> has been <strong>rejected</strong>.</p>
+            <p>Reason: ${reason}</p>
+            <p>Rejected on ${time}</p>
+            <p>If you have any questions, contact us at 
+            <a href="mailto:support@vango.com">support@vango.com</a></p>
+          `,
+          };
+          await sgMail.send(msg);
+          console.log("✅ Rejection email sent to", email);
+        }
+      } catch (error) {
+        console.error(
+            "❌ Error sending email via SendGrid:",
+        error.response ? error.response.body : error,
+        );
+      }
+
+      return null;
+    },
+);
