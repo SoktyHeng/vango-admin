@@ -72,44 +72,97 @@ class _TripPageState extends State<TripPage> {
     }
   }
 
+  // Add this method to get route price
+  Future<double> _getRoutePrice(String routeId) async {
+    try {
+      final routeSnapshot = await _firestore
+          .collection('routes')
+          .where('routeId', isEqualTo: routeId)
+          .get();
+      
+      if (routeSnapshot.docs.isNotEmpty) {
+        final routeData = routeSnapshot.docs.first.data();
+        return (routeData['pricePerSeat'] ?? 0).toDouble();
+      }
+    } catch (e) {
+      // Handle error silently
+    }
+    return 0.0;
+  }
+
+  // Add this method to calculate revenue
+  double _calculateRevenue(Map<String, dynamic> schedule, double pricePerSeat) {
+    final status = _computeScheduleStatus(schedule);
+    if (status.toLowerCase() == 'completed') {
+      final seatsTaken = (schedule['seatsTaken'] as List).length;
+      return seatsTaken * pricePerSeat;
+    }
+    return 0.0;
+  }
+
+  Future<double> _calculateTotalRevenue(List<Map<String, dynamic>> schedules) async {
+    double totalRevenue = 0.0;
+    
+    for (var schedule in schedules) {
+      final status = _computeScheduleStatus(schedule);
+      if (status.toLowerCase() == 'completed') {
+        final routeId = schedule['routeId'] ?? '';
+        final pricePerSeat = await _getRoutePrice(routeId);
+        final seatsTaken = (schedule['seatsTaken'] as List).length;
+        totalRevenue += seatsTaken * pricePerSeat;
+      }
+    }
+    
+    return totalRevenue;
+  }
+
+  // Update the StreamBuilder to include route prices
   Stream<List<Map<String, dynamic>>> getSchedulesStream() {
     return _firestore
         .collection('schedules')
         .orderBy('date', descending: false)
         .snapshots()
-        .map(
-          (snapshot) =>
-              snapshot.docs.map((doc) {
-                final data = doc.data();
-                return {
-                  'id': doc.id,
-                  'routeId': data['routeId'] ?? '',
-                  'date': data['date'] ?? '',
-                  'time': data['time'] ?? '',
-                  'seatsTotal': data['seatsTotal'] ?? 0,
-                  'seatsTaken': data['seatsTaken'] ?? [],
-                  'driverId': data['driverId'] ?? '',
-                  'driverName': data['driverName'] ?? '',
-                  'vanId': data['vanId'] ?? '',
-                  'vanLicense': data['vanLicense'] ?? '',
-                  'status': data['status'] ?? 'active',
-                  'createdAt': data['createdAt'],
-                  'updatedAt': data['updatedAt'],
-                };
-              }).toList()..sort((a, b) {
-                // First sort by date
-                final dateCompare = a['date'].compareTo(b['date']);
-                if (dateCompare != 0) return dateCompare;
+        .asyncMap((snapshot) async {
+          List<Map<String, dynamic>> schedules = [];
+          
+          for (var doc in snapshot.docs) {
+            final data = doc.data();
+            final routeId = data['routeId'] ?? '';
+            final pricePerSeat = await _getRoutePrice(routeId);
+            
+            schedules.add({
+              'id': doc.id,
+              'routeId': routeId,
+              'date': data['date'] ?? '',
+              'time': data['time'] ?? '',
+              'seatsTotal': data['seatsTotal'] ?? 0,
+              'seatsTaken': data['seatsTaken'] ?? [],
+              'driverId': data['driverId'] ?? '',
+              'driverName': data['driverName'] ?? '',
+              'vanId': data['vanId'] ?? '',
+              'vanLicense': data['vanLicense'] ?? '',
+              'status': data['status'] ?? 'active',
+              'createdAt': data['createdAt'],
+              'updatedAt': data['updatedAt'],
+              'pricePerSeat': pricePerSeat,
+            });
+          }
+          
+          // Sort the schedules
+          schedules.sort((a, b) {
+            final dateCompare = a['date'].compareTo(b['date']);
+            if (dateCompare != 0) return dateCompare;
 
-                // If dates are the same, sort by time using proper time parsing
-                final aTime = a['time'] ?? '';
-                final bTime = b['time'] ?? '';
-                final aTimeMinutes = _parseTimeToMinutes(aTime);
-                final bTimeMinutes = _parseTimeToMinutes(bTime);
+            final aTime = a['time'] ?? '';
+            final bTime = b['time'] ?? '';
+            final aTimeMinutes = _parseTimeToMinutes(aTime);
+            final bTimeMinutes = _parseTimeToMinutes(bTime);
 
-                return aTimeMinutes.compareTo(bTimeMinutes);
-              }),
-        );
+            return aTimeMinutes.compareTo(bTimeMinutes);
+          });
+          
+          return schedules;
+        });
   }
 
   // Get available drivers from Firestore
@@ -308,10 +361,6 @@ class _TripPageState extends State<TripPage> {
         return Colors.grey;
       case 'cancelled':
         return Colors.red;
-      case 'delayed':
-        return Colors.orange;
-      case 'invalid':
-        return Colors.red.shade300;
       default:
         return Colors.grey;
     }
@@ -330,6 +379,9 @@ class _TripPageState extends State<TripPage> {
   }
 
   void _showScheduleDetails(Map<String, dynamic> schedule) {
+    final pricePerSeat = schedule['pricePerSeat'] ?? 0.0;
+    final revenue = _calculateRevenue(schedule, pricePerSeat);
+    
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -355,6 +407,8 @@ class _TripPageState extends State<TripPage> {
                         (schedule['seatsTaken'] as List).length)
                     .toString(),
               ),
+              _detailRow('Price per Seat:', '\$${pricePerSeat.toStringAsFixed(2)}'),
+              _detailRow('Revenue:', revenue > 0 ? '\$${revenue.toStringAsFixed(2)}' : 'Not completed'),
               _detailRow('Status:', _computeScheduleStatus(schedule)),
               const SizedBox(height: 16),
               if ((schedule['seatsTaken'] as List).isNotEmpty) ...[
@@ -528,7 +582,11 @@ class _TripPageState extends State<TripPage> {
             children: [
               const Text(
                 "Trip Management",
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF2D3748),
+                ),
               ),
               Row(
                 children: [
@@ -569,14 +627,20 @@ class _TripPageState extends State<TripPage> {
               ),
             ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 24),
 
-          // Search Bar
+          // Search Bar - Updated styling
           Container(
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey.shade300),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.1),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
             child: TextField(
               onChanged: (value) {
@@ -589,7 +653,12 @@ class _TripPageState extends State<TripPage> {
                     'Search schedules by route, driver, van license, or date...',
                 hintStyle: TextStyle(color: Colors.grey.shade500),
                 prefixIcon: Icon(Icons.search, color: Colors.grey.shade500),
-                border: InputBorder.none,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                filled: true,
+                fillColor: Colors.white,
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: 16,
                   vertical: 16,
@@ -599,13 +668,19 @@ class _TripPageState extends State<TripPage> {
           ),
           const SizedBox(height: 16),
 
-          // Filter Bar
+          // Filter Bar - Updated styling
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey.shade300),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.1),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
             child: Row(
               children: [
@@ -758,34 +833,75 @@ class _TripPageState extends State<TripPage> {
               ],
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 24),
 
-          // Data Table Container
+          // Data Table Container - Updated styling
           Expanded(
             child: Container(
               width: double.infinity,
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade300),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.1),
+                    blurRadius: 10,
+                    offset: const Offset(4, 4),
+                  ),
+                ],
               ),
               child: StreamBuilder<List<Map<String, dynamic>>>(
                 stream: getSchedulesStream(),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
+                    return const Center(
+                      child: CircularProgressIndicator(color: Color(0xFF4E4E94)),
+                    );
                   }
 
-                  if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                    return const Center(
+                  if (snapshot.hasError) {
+                    return Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.schedule, size: 64, color: Colors.grey),
-                          SizedBox(height: 16),
+                          Icon(
+                            Icons.error_outline,
+                            size: 64,
+                            color: Colors.grey.shade400,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Error loading schedules',
+                            style: TextStyle(
+                              fontSize: 18,
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+
+                  if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.schedule,
+                            size: 64,
+                            color: Colors.grey.shade400,
+                          ),
+                          const SizedBox(height: 16),
                           Text(
                             'No scheduled trips found',
-                            style: TextStyle(fontSize: 18, color: Colors.grey),
+                            style: TextStyle(
+                              fontSize: 18,
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ],
                       ),
@@ -802,12 +918,16 @@ class _TripPageState extends State<TripPage> {
                           Icon(
                             Icons.filter_list_off,
                             size: 64,
-                            color: Colors.grey,
+                            color: Colors.grey.shade400,
                           ),
                           const SizedBox(height: 16),
-                          const Text(
+                          Text(
                             'No trips match your filters',
-                            style: TextStyle(fontSize: 18, color: Colors.grey),
+                            style: TextStyle(
+                              fontSize: 18,
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                           const SizedBox(height: 8),
                           TextButton.icon(
@@ -821,315 +941,269 @@ class _TripPageState extends State<TripPage> {
                   }
 
                   return SingleChildScrollView(
-                    child: Theme(
-                      data: Theme.of(context).copyWith(
-                        dataTableTheme: DataTableThemeData(
-                          headingRowColor: WidgetStateProperty.all(
-                            Colors.grey.shade50,
-                          ),
-                          dataRowColor: WidgetStateProperty.resolveWith((
-                            states,
-                          ) {
-                            if (states.contains(WidgetState.hovered)) {
-                              return Colors.grey.shade100;
-                            }
-                            return null;
-                          }),
-                        ),
+                    child: DataTable(
+                      columnSpacing: 20,
+                      headingRowColor: WidgetStateProperty.all(
+                        Colors.grey.shade50,
                       ),
-                      child: DataTable(
-                        columnSpacing: 20,
-                        horizontalMargin: 20,
-                        headingRowHeight: 56,
-                        dataRowHeight: 56,
-                        columns: const [
-                          DataColumn(
-                            label: Text(
-                              "Date",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
-                          DataColumn(
-                            label: Text(
-                              "Time",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
-                          DataColumn(
-                            label: Text(
-                              "Route",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
-                          DataColumn(
-                            label: Text(
-                              "Driver",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
-                          DataColumn(
-                            label: Text(
-                              "Van License",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
-                          DataColumn(
-                            label: Text(
-                              "Seats",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
-                          DataColumn(
-                            label: Text(
-                              "Status",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
-                          DataColumn(
-                            label: Text(
-                              "Actions",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
-                        ],
-                        rows: filteredSchedules.map((schedule) {
-                          final status = _computeScheduleStatus(schedule);
-                          final seatsTaken =
-                              (schedule['seatsTaken'] as List).length;
-                          final seatsTotal = schedule['seatsTotal'];
+                      headingTextStyle: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF2D3748),
+                      ),
+                      dataTextStyle: TextStyle(color: Colors.grey.shade700),
+                      columns: const [
+                        DataColumn(
+                          label: Text("Date"),
+                        ),
+                        DataColumn(
+                          label: Text("Time"),
+                        ),
+                        DataColumn(
+                          label: Text("Route"),
+                        ),
+                        DataColumn(
+                          label: Text("Price"),
+                        ),
+                        DataColumn(
+                          label: Text("Driver"),
+                        ),
+                        DataColumn(
+                          label: Text("Van License"),
+                        ),
+                        DataColumn(
+                          label: Text("Seats"),
+                        ),
+                        DataColumn(
+                          label: Text("Revenue"),
+                        ),
+                        DataColumn(
+                          label: Text("Status"),
+                        ),
+                        DataColumn(
+                          label: Text("Actions"),
+                        ),
+                      ],
+                      rows: filteredSchedules.map((schedule) {
+                        final status = _computeScheduleStatus(schedule);
+                        final seatsTaken = (schedule['seatsTaken'] as List).length;
+                        final seatsTotal = schedule['seatsTotal'];
+                        final pricePerSeat = schedule['pricePerSeat'] ?? 0.0;
+                        final revenue = _calculateRevenue(schedule, pricePerSeat);
 
-                          return DataRow(
-                            cells: [
-                              DataCell(
-                                Text(
-                                  schedule['date'],
-                                  style: const TextStyle(fontSize: 13),
+                        return DataRow(
+                          cells: [
+                            DataCell(
+                              Text(
+                                schedule['date'],
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  color: Color(0xFF2D3748),
                                 ),
                               ),
-                              DataCell(
-                                Text(
-                                  schedule['time'],
-                                  style: const TextStyle(fontSize: 13),
+                            ),
+                            DataCell(
+                              Text(
+                                schedule['time'],
+                                style: const TextStyle(fontSize: 14),
+                              ),
+                            ),
+                            DataCell(
+                              Text(
+                                _formatRoute(schedule['routeId']),
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
                                 ),
                               ),
-                              DataCell(
-                                Text(
-                                  _formatRoute(schedule['routeId']),
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w500,
+                            ),
+                            DataCell(
+                              Text(
+                                '${pricePerSeat} B',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: Color(0xFF2D3748),
+                                ),
+                              ),
+                            ),
+                            DataCell(
+                              Text(
+                                schedule['driverName'],
+                                style: const TextStyle(fontSize: 14),
+                              ),
+                            ),
+                            DataCell(
+                              Text(
+                                schedule['vanLicense'],
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                            DataCell(
+                              Text(
+                                '$seatsTaken/$seatsTotal',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: seatsTaken == seatsTotal
+                                      ? Colors.red
+                                      : Colors.green,
+                                ),
+                              ),
+                            ),
+                            DataCell(
+                              Text(
+                                revenue > 0
+                                    ? '$revenue'
+                                    : '    -',
+                                style: const TextStyle(fontSize: 14),
+                              ),
+                            ),
+                            DataCell(
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _getStatusColor(status).withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: _getStatusColor(status).withOpacity(0.5),
                                   ),
                                 ),
-                              ),
-                              DataCell(
-                                Text(
-                                  schedule['driverName'],
-                                  style: const TextStyle(fontSize: 13),
-                                ),
-                              ),
-                              DataCell(
-                                Text(
-                                  schedule['vanLicense'],
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontFamily: 'monospace',
-                                  ),
-                                ),
-                              ),
-                              DataCell(
-                                Text(
-                                  '$seatsTaken/$seatsTotal',
+                                child: Text(
+                                  status,
                                   style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w500,
-                                    color: seatsTaken == seatsTotal
-                                        ? Colors.red
-                                        : Colors.green,
+                                    color: _getStatusColor(status),
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 12,
                                   ),
                                 ),
                               ),
-                              DataCell(
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: _getStatusColor(
-                                      status,
-                                    ).withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(
-                                      color: _getStatusColor(
-                                        status,
-                                      ).withOpacity(0.5),
+                            ),
+                            DataCell(
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.visibility,
+                                      color: Colors.blue,
+                                      size: 20,
                                     ),
+                                    onPressed: () => _showScheduleDetails(schedule),
+                                    tooltip: 'View Details',
                                   ),
-                                  child: Text(
-                                    status,
-                                    style: TextStyle(
-                                      color: _getStatusColor(status),
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 12,
+                                  PopupMenuButton<String>(
+                                    icon: const Icon(
+                                      Icons.more_vert,
+                                      color: Colors.grey,
+                                      size: 20,
                                     ),
-                                  ),
-                                ),
-                              ),
-                              DataCell(
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      icon: Icon(
-                                        Icons.visibility,
-                                        size: 18,
-                                        color: Colors.blue.shade600,
-                                      ),
-                                      onPressed: () =>
-                                          _showScheduleDetails(schedule),
-                                      tooltip: 'View Details',
-                                      padding: const EdgeInsets.all(4),
-                                      constraints: const BoxConstraints(
-                                        minWidth: 32,
-                                        minHeight: 32,
-                                      ),
-                                    ),
-                                    PopupMenuButton<String>(
-                                      icon: Icon(
-                                        Icons.more_vert,
-                                        size: 18,
-                                        color: Colors.grey.shade600,
-                                      ),
-                                      tooltip: 'More Actions',
-                                      onSelected: (value) {
-                                        switch (value) {
-                                          case 'edit':
-                                            _editSchedule(schedule);
-                                            break;
-                                          case 'complete':
-                                            _updateScheduleStatus(
-                                              schedule['id'],
-                                              'completed',
-                                            );
-                                            break;
-                                          case 'cancel':
-                                            _updateScheduleStatus(
-                                              schedule['id'],
-                                              'cancelled',
-                                            );
-                                            break;
-                                          case 'activate':
-                                            _updateScheduleStatus(
-                                              schedule['id'],
-                                              'active',
-                                            );
-                                            break;
-                                          case 'delete':
-                                            _deleteSchedule(schedule['id']);
-                                            break;
-                                        }
-                                      },
-                                      itemBuilder: (context) {
-                                        final currentStatus =
-                                            schedule['status'] ?? 'active';
+                                    tooltip: 'More Actions',
+                                    onSelected: (value) {
+                                      switch (value) {
+                                        case 'edit':
+                                          _editSchedule(schedule);
+                                          break;
+                                        case 'complete':
+                                          _updateScheduleStatus(
+                                            schedule['id'],
+                                            'completed',
+                                          );
+                                          break;
+                                        case 'cancel':
+                                          _updateScheduleStatus(
+                                            schedule['id'],
+                                            'cancelled',
+                                          );
+                                          break;
+                                        case 'activate':
+                                          _updateScheduleStatus(
+                                            schedule['id'],
+                                            'active',
+                                          );
+                                          break;
+                                        case 'delete':
+                                          _deleteSchedule(schedule['id']);
+                                          break;
+                                      }
+                                    },
+                                    itemBuilder: (context) {
+                                      final currentStatus = schedule['status'] ?? 'active';
 
-                                        return [
+                                      return [
+                                        const PopupMenuItem(
+                                          value: 'edit',
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                Icons.edit,
+                                                size: 16,
+                                                color: Colors.orange,
+                                              ),
+                                              SizedBox(width: 8),
+                                              Text('Edit'),
+                                            ],
+                                          ),
+                                        ),
+                                        if (currentStatus == 'active')
                                           const PopupMenuItem(
-                                            value: 'edit',
+                                            value: 'complete',
                                             child: Row(
                                               children: [
                                                 Icon(
-                                                  Icons.edit,
+                                                  Icons.check_circle,
                                                   size: 16,
-                                                  color: Colors.orange,
+                                                  color: Colors.green,
                                                 ),
                                                 SizedBox(width: 8),
-                                                Text('Edit'),
+                                                Text('Mark Complete'),
                                               ],
                                             ),
                                           ),
-                                          // Show "Mark Complete" for active trips only
-                                          if (currentStatus == 'active')
-                                            const PopupMenuItem(
-                                              value: 'complete',
-                                              child: Row(
-                                                children: [
-                                                  Icon(
-                                                    Icons.check_circle,
-                                                    size: 16,
-                                                    color: Colors.green,
-                                                  ),
-                                                  SizedBox(width: 8),
-                                                  Text('Mark Complete'),
-                                                ],
-                                              ),
-                                            ),
-                                          // Show "Cancel" for both active AND scheduled trips
-                                          if (currentStatus == 'active' ||
-                                              currentStatus == 'scheduled')
-                                            const PopupMenuItem(
-                                              value: 'cancel',
-                                              child: Row(
-                                                children: [
-                                                  Icon(
-                                                    Icons.cancel,
-                                                    size: 16,
-                                                    color: Colors.red,
-                                                  ),
-                                                  SizedBox(width: 8),
-                                                  Text('Cancel'),
-                                                ],
-                                              ),
-                                            ),
-                                          const PopupMenuDivider(),
+                                        if (currentStatus == 'active' ||
+                                            currentStatus == 'scheduled')
                                           const PopupMenuItem(
-                                            value: 'delete',
+                                            value: 'cancel',
                                             child: Row(
                                               children: [
                                                 Icon(
-                                                  Icons.delete,
+                                                  Icons.cancel,
                                                   size: 16,
                                                   color: Colors.red,
                                                 ),
                                                 SizedBox(width: 8),
-                                                Text('Delete'),
+                                                Text('Cancel'),
                                               ],
                                             ),
                                           ),
-                                        ];
-                                      },
-                                    ),
-                                  ],
-                                ),
+                                        const PopupMenuDivider(),
+                                        const PopupMenuItem(
+                                          value: 'delete',
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                Icons.delete,
+                                                size: 16,
+                                                color: Colors.red,
+                                              ),
+                                              SizedBox(width: 8),
+                                              Text('Delete'),
+                                            ],
+                                          ),
+                                        ),
+                                      ];
+                                    },
+                                  ),
+                                ],
                               ),
-                            ],
-                          );
-                        }).toList(),
-                      ),
+                            ),
+                          ],
+                        );
+                      }).toList(),
                     ),
                   );
                 },

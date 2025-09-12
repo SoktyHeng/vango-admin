@@ -259,7 +259,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Color _getStatusColor(String? status) {
     switch (status) {
       case 'Completed':
-        return Colors.green;
+        return Colors.grey;
       case 'Upcoming':
         return Colors.blue;
       default:

@@ -156,6 +156,13 @@ class _RecurringScheduleManagerState extends State<RecurringScheduleManager> {
             },
           )
           .toList();
+    
+      // Sort vans by vanId
+      _vans.sort((a, b) {
+        final vanIdA = a['vanId'].toString().toLowerCase();
+        final vanIdB = b['vanId'].toString().toLowerCase();
+        return vanIdA.compareTo(vanIdB);
+      });
     } catch (e) {
       debugPrint('Error loading vans: $e');
     }
@@ -1031,3 +1038,4 @@ class _RecurringScheduleManagerState extends State<RecurringScheduleManager> {
     }
   }
 }
+
