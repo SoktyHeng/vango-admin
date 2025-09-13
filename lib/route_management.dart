@@ -241,9 +241,11 @@ class _RouteManagementPageState extends State<RouteManagementPage> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        automaticallyImplyLeading: false, // This removes the back button
-        title: const Text('Route Management'),
+        automaticallyImplyLeading: false, 
+        title: const Text('Route Management', 
+            style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
       ),
       body: isLoading
