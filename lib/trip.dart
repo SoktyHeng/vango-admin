@@ -127,10 +127,38 @@ class _TripPageState extends State<TripPage> {
         .asyncMap((snapshot) async {
           List<Map<String, dynamic>> schedules = [];
 
+          // Get all unique route IDs first
+          Set<String> routeIds = {};
           for (var doc in snapshot.docs) {
             final data = doc.data();
             final routeId = data['routeId'] ?? '';
-            final pricePerSeat = await _getRoutePrice(routeId);
+            if (routeId.isNotEmpty) {
+              routeIds.add(routeId);
+            }
+          }
+
+          // Batch fetch all route prices at once
+          Map<String, double> routePrices = {};
+          if (routeIds.isNotEmpty) {
+            final routesSnapshot = await _firestore
+                .collection('routes')
+                .where('routeId', whereIn: routeIds.toList())
+                .get();
+            
+            for (var routeDoc in routesSnapshot.docs) {
+              final routeData = routeDoc.data();
+              final routeId = routeData['routeId'];
+              if (routeId != null) {
+                routePrices[routeId] = (routeData['pricePerSeat'] ?? 0).toDouble();
+              }
+            }
+          }
+
+          // Build schedules with cached prices
+          for (var doc in snapshot.docs) {
+            final data = doc.data();
+            final routeId = data['routeId'] ?? '';
+            final pricePerSeat = routePrices[routeId] ?? 0.0;
 
             schedules.add({
               'id': doc.id,
@@ -326,7 +354,6 @@ class _TripPageState extends State<TripPage> {
       if (storedStatus == 'scheduled' || storedStatus == 'completed') {
         return storedStatus;
       }
-
     }
 
     // Fallback to date-based computation for backward compatibility
@@ -617,6 +644,239 @@ class _TripPageState extends State<TripPage> {
     return groupedSchedules;
   }
 
+  // Add these helper methods before the build method
+  DataRow _buildScheduleRow(Map<String, dynamic> schedule) {
+    final status = _computeScheduleStatus(schedule);
+    final seatsTaken = (schedule['seatsTaken'] as List).length;
+    final seatsTotal = schedule['seatsTotal'];
+    final pricePerSeat = schedule['pricePerSeat'] ?? 0.0;
+    final revenue = _calculateRevenue(schedule, pricePerSeat);
+
+    return DataRow(
+      cells: [
+        DataCell(
+          Text(
+            schedule['date'],
+            style: const TextStyle(fontSize: 14, color: Color(0xFF2D3748)),
+          ),
+        ),
+        DataCell(Text(schedule['time'], style: const TextStyle(fontSize: 14))),
+        DataCell(
+          Text(
+            '${pricePerSeat.toStringAsFixed(0)} B',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Color(0xFF2D3748),
+            ),
+          ),
+        ),
+        DataCell(
+          Text(schedule['driverName'], style: const TextStyle(fontSize: 14)),
+        ),
+        DataCell(
+          Text(schedule['vanLicense'], style: const TextStyle(fontSize: 14)),
+        ),
+        DataCell(
+          Text(
+            '$seatsTaken/$seatsTotal',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: seatsTaken == seatsTotal ? Colors.red : Colors.green,
+            ),
+          ),
+        ),
+        DataCell(
+          Text(
+            revenue > 0 ? '${revenue} B' : '',
+            style: const TextStyle(fontSize: 14),
+          ),
+        ),
+        DataCell(
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            decoration: BoxDecoration(
+              color: _getStatusColor(status).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: _getStatusColor(status).withOpacity(0.5),
+              ),
+            ),
+            child: Text(
+              status,
+              style: TextStyle(
+                color: _getStatusColor(status),
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ),
+        DataCell(_buildActionButtons(schedule)),
+      ],
+    );
+  }
+
+  DataRow _buildScheduleRowWithRoute(Map<String, dynamic> schedule) {
+    final status = _computeScheduleStatus(schedule);
+    final seatsTaken = (schedule['seatsTaken'] as List).length;
+    final seatsTotal = schedule['seatsTotal'];
+    final pricePerSeat = schedule['pricePerSeat'] ?? 0.0;
+    final revenue = _calculateRevenue(schedule, pricePerSeat);
+
+    return DataRow(
+      cells: [
+        DataCell(
+          Text(
+            _formatRoute(schedule['routeId']),
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Color(0xFF2D3748),
+            ),
+          ),
+        ),
+        DataCell(
+          Text(
+            schedule['date'],
+            style: const TextStyle(fontSize: 14, color: Color(0xFF2D3748)),
+          ),
+        ),
+        DataCell(Text(schedule['time'], style: const TextStyle(fontSize: 14))),
+        DataCell(
+          Text(
+            '${pricePerSeat.toStringAsFixed(0)} B',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Color(0xFF2D3748),
+            ),
+          ),
+        ),
+        DataCell(
+          Text(schedule['driverName'], style: const TextStyle(fontSize: 14)),
+        ),
+        DataCell(
+          Text(schedule['vanLicense'], style: const TextStyle(fontSize: 14)),
+        ),
+        DataCell(
+          Text(
+            '$seatsTaken/$seatsTotal',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: seatsTaken == seatsTotal ? Colors.red : Colors.green,
+            ),
+          ),
+        ),
+        DataCell(
+          Text(
+            revenue > 0 ? '${revenue.toStringAsFixed(2)} B' : '',
+            style: const TextStyle(fontSize: 14),
+          ),
+        ),
+        DataCell(
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            decoration: BoxDecoration(
+              color: _getStatusColor(status).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: _getStatusColor(status).withOpacity(0.5),
+              ),
+            ),
+            child: Text(
+              status,
+              style: TextStyle(
+                color: _getStatusColor(status),
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ),
+        DataCell(_buildActionButtons(schedule)),
+      ],
+    );
+  }
+
+  Widget _buildActionButtons(Map<String, dynamic> schedule) {
+    return SizedBox(
+      width: 80, // Set a fixed width for the actions column
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            icon: const Icon(Icons.visibility, color: Colors.blue, size: 18),
+            onPressed: () => _showScheduleDetails(schedule),
+            tooltip: 'View Details',
+            padding: const EdgeInsets.all(4), // Reduce padding
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32), // Smaller constraints
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.grey, size: 18),
+            tooltip: 'More Actions',
+            padding: const EdgeInsets.all(4), // Reduce padding
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32), // Smaller constraints
+            onSelected: (value) {
+              switch (value) {
+                case 'edit':
+                  _editSchedule(schedule);
+                  break;
+                case 'complete':
+                  _updateScheduleStatus(schedule['id'], 'completed');
+                  break;
+                case 'activate':
+                  _updateScheduleStatus(schedule['id'], 'active');
+                  break;
+                case 'delete':
+                  _deleteSchedule(schedule['id']);
+                  break;
+              }
+            },
+            itemBuilder: (context) {
+              final currentStatus = _computeScheduleStatus(schedule);
+              return [
+                if (currentStatus.toLowerCase() != 'completed')
+                  const PopupMenuItem(
+                    value: 'complete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.check_circle, size: 16, color: Colors.green),
+                        SizedBox(width: 8),
+                        Text('Mark Complete'),
+                      ],
+                    ),
+                  ),
+                const PopupMenuItem(
+                  value: 'edit',
+                  child: Row(
+                    children: [
+                      Icon(Icons.edit, size: 16, color: Colors.orange),
+                      SizedBox(width: 8),
+                      Text('Edit'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'delete',
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete, size: 16, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('Delete'),
+                    ],
+                  ),
+                ),
+              ];
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -883,7 +1143,7 @@ class _TripPageState extends State<TripPage> {
           ),
           const SizedBox(height: 24),
 
-          // Data Table Container - Updated to show grouped by route with totals
+          // Data Table Container - Fixed column structure
           Expanded(
             child: Container(
               width: double.infinity,
@@ -990,318 +1250,200 @@ class _TripPageState extends State<TripPage> {
                     );
                   }
 
-                  // Group schedules by route and calculate revenue totals
-                  final groupedSchedules = _groupSchedulesByRoute(
-                    filteredSchedules,
-                  );
-                  final routeRevenue = _calculateRevenueByRoute(
-                    filteredSchedules,
-                  );
+                  // Calculate total revenue for all filtered schedules
+                  double totalRevenue = 0.0;
+                  for (var schedule in filteredSchedules) {
+                    final status = _computeScheduleStatus(schedule);
+                    if (status.toLowerCase() == 'completed') {
+                      final pricePerSeat = schedule['pricePerSeat'] ?? 0.0;
+                      final seatsTaken =
+                          (schedule['seatsTaken'] as List).length;
+                      totalRevenue += seatsTaken * pricePerSeat;
+                    }
+                  }
 
-                  return SingleChildScrollView(
-                    child: Column(
-                      children: [
-                        // Build table for each route
-                        ...groupedSchedules.entries.map((routeEntry) {
-                          final routeId = routeEntry.key;
-                          final routeSchedules = routeEntry.value;
-                          final totalRevenue = routeRevenue[routeId] ?? 0.0;
+                  // Check if we should show grouped by route or all in one table
+                  final shouldGroupByRoute =
+                      _selectedRouteFilter != null &&
+                      _selectedRouteFilter!.isNotEmpty;
 
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Data table for this route
-                              DataTable(
-                                columnSpacing: 60,
-                                headingRowColor: WidgetStateProperty.all(
-                                  Colors.grey.shade50,
-                                ),
-                                headingTextStyle: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF2D3748),
-                                ),
-                                dataTextStyle: TextStyle(
-                                  color: Colors.grey.shade700,
-                                ),
-                                columns: const [
-                                  DataColumn(label: Text("Date")),
-                                  DataColumn(label: Text("Time")),
-                                  DataColumn(label: Text("Price")),
-                                  DataColumn(label: Text("Driver")),
-                                  DataColumn(label: Text("Van License")),
-                                  DataColumn(label: Text("Seats")),
-                                  DataColumn(label: Text("Revenue")),
-                                  DataColumn(label: Text("Status")),
-                                  DataColumn(label: Text("Actions")),
-                                ],
-                                rows: [
-                                  // Regular schedule rows
-                                  ...routeSchedules.map((schedule) {
-                                    final status = _computeScheduleStatus(
-                                      schedule,
-                                    );
-                                    final seatsTaken =
-                                        (schedule['seatsTaken'] as List).length;
-                                    final seatsTotal = schedule['seatsTotal'];
-                                    final pricePerSeat =
-                                        schedule['pricePerSeat'] ?? 0.0;
-                                    final revenue = _calculateRevenue(
-                                      schedule,
-                                      pricePerSeat,
-                                    );
+                  if (shouldGroupByRoute) {
+                    // Group schedules by route and calculate revenue totals
+                    final groupedSchedules = _groupSchedulesByRoute(
+                      filteredSchedules,
+                    );
+                    final routeRevenue = _calculateRevenueByRoute(
+                      filteredSchedules,
+                    );
 
-                                    return DataRow(
+                    return SingleChildScrollView(
+                      child: Column(
+                        children: [
+                          // Build table for each route
+                          ...groupedSchedules.entries.map((routeEntry) {
+                            final routeId = routeEntry.key;
+                            final routeSchedules = routeEntry.value;
+                            final routeTotalRevenue =
+                                routeRevenue[routeId] ?? 0.0;
+
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                              
+                                // Data table for this route (without route column)
+                                DataTable(
+                                  columnSpacing: 60, // Reduced spacing between columns
+                                  headingRowColor: WidgetStateProperty.all(
+                                    Colors.grey.shade50,
+                                  ),
+                                  headingTextStyle: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF2D3748),
+                                  ),
+                                  dataTextStyle: TextStyle(
+                                    color: Colors.grey.shade700,
+                                  ),
+                                  columns: const [
+                                    DataColumn(label: Text("Date")),
+                                    DataColumn(label: Text("Time")),
+                                    DataColumn(label: Text("Price")),
+                                    DataColumn(label: Text("Driver")),
+                                    DataColumn(label: Text("Van License")),
+                                    DataColumn(label: Text("Seats")),
+                                    DataColumn(label: Text("Revenue")),
+                                    DataColumn(label: Text("Status")),
+                                    DataColumn(label: Text("Actions")),
+                                  ],
+                                  rows: [
+                                    // Regular schedule rows
+                                    ...routeSchedules.map(
+                                      (schedule) => _buildScheduleRow(schedule),
+                                    ),
+                                    // Total revenue row for this route
+                                    DataRow(
+                                      color: WidgetStateProperty.all(
+                                        Colors.green.shade50,
+                                      ),
                                       cells: [
                                         DataCell(
                                           Text(
-                                            schedule['date'],
-                                            style: const TextStyle(
-                                              fontSize: 14,
-                                              color: Color(0xFF2D3748),
-                                            ),
-                                          ),
-                                        ),
-                                        DataCell(
-                                          Text(
-                                            schedule['time'],
-                                            style: const TextStyle(
-                                              fontSize: 14,
-                                            ),
-                                          ),
-                                        ),
-                                        DataCell(
-                                          Text(
-                                            '${pricePerSeat} B',
-                                            style: const TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w500,
-                                              color: Color(0xFF2D3748),
-                                            ),
-                                          ),
-                                        ),
-                                        DataCell(
-                                          Text(
-                                            schedule['driverName'],
-                                            style: const TextStyle(
-                                              fontSize: 14,
-                                            ),
-                                          ),
-                                        ),
-                                        DataCell(
-                                          Text(
-                                            schedule['vanLicense'],
-                                            style: const TextStyle(
-                                              fontSize: 14,
-                                            ),
-                                          ),
-                                        ),
-                                        DataCell(
-                                          Text(
-                                            '$seatsTaken/$seatsTotal',
+                                            'TOTAL',
                                             style: TextStyle(
                                               fontSize: 14,
-                                              fontWeight: FontWeight.w500,
-                                              color: seatsTaken == seatsTotal
-                                                  ? Colors.red
-                                                  : Colors.green,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.green.shade800,
                                             ),
                                           ),
                                         ),
+                                        const DataCell(Text('')),
+                                        const DataCell(Text('')),
+                                        const DataCell(Text('')),
+                                        const DataCell(Text('')),
+                                        const DataCell(Text('')),
                                         DataCell(
                                           Text(
-                                            revenue > 0
-                                                ? '     $revenue'
-                                                : '      -',
-                                            style: const TextStyle(
-                                              fontSize: 14,
+                                            routeTotalRevenue > 0
+                                                ? '${routeTotalRevenue.toStringAsFixed(2)} B'
+                                                : '0.00 B',
+                                            style: TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.green.shade800,
                                             ),
                                           ),
                                         ),
-                                        DataCell(
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 12,
-                                              vertical: 4,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: _getStatusColor(
-                                                status,
-                                              ).withOpacity(0.1),
-                                              borderRadius:
-                                                  BorderRadius.circular(20),
-                                              border: Border.all(
-                                                color: _getStatusColor(
-                                                  status,
-                                                ).withOpacity(0.5),
-                                              ),
-                                            ),
-                                            child: Text(
-                                              status,
-                                              style: TextStyle(
-                                                color: _getStatusColor(status),
-                                                fontWeight: FontWeight.w600,
-                                                fontSize: 12,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                        DataCell(
-                                          Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              IconButton(
-                                                icon: const Icon(
-                                                  Icons.visibility,
-                                                  color: Colors.blue,
-                                                  size: 20,
-                                                ),
-                                                onPressed: () =>
-                                                    _showScheduleDetails(
-                                                      schedule,
-                                                    ),
-                                                tooltip: 'View Details',
-                                              ),
-                                              PopupMenuButton<String>(
-                                                icon: const Icon(
-                                                  Icons.more_vert,
-                                                  color: Colors.grey,
-                                                  size: 20,
-                                                ),
-                                                tooltip: 'More Actions',
-                                                onSelected: (value) {
-                                                  switch (value) {
-                                                    case 'edit':
-                                                      _editSchedule(schedule);
-                                                      break;
-                                                    case 'complete':
-                                                      _updateScheduleStatus(
-                                                        schedule['id'],
-                                                        'completed',
-                                                      );
-                                                      break;
-                                                    case 'activate':
-                                                      _updateScheduleStatus(
-                                                        schedule['id'],
-                                                        'active',
-                                                      );
-                                                      break;
-                                                    case 'delete':
-                                                      _deleteSchedule(
-                                                        schedule['id'],
-                                                      );
-                                                      break;
-                                                  }
-                                                },
-                                                itemBuilder: (context) {
-                                                  final currentStatus =
-                                                      _computeScheduleStatus(schedule);
-
-                                                  return [
-                                                    // Show "Mark Complete" for schedules that are not already completed
-                                                    if (currentStatus.toLowerCase() != 'completed')
-                                                      const PopupMenuItem(
-                                                        value: 'complete',
-                                                        child: Row(
-                                                          children: [
-                                                            Icon(
-                                                              Icons
-                                                                  .check_circle,
-                                                              size: 16,
-                                                              color:
-                                                                  Colors.green,
-                                                            ),
-                                                            SizedBox(width: 8),
-                                                            Text(
-                                                              'Mark Complete',
-                                                            ),
-                                                          ],
-                                                        ),
-                                                      ),
-                                                    const PopupMenuItem(
-                                                      value: 'edit',
-                                                      child: Row(
-                                                        children: [
-                                                          Icon(
-                                                            Icons.edit,
-                                                            size: 16,
-                                                            color:
-                                                                Colors.orange,
-                                                          ),
-                                                          SizedBox(width: 8),
-                                                          Text('Edit'),
-                                                        ],
-                                                      ),
-                                                    ),
-                                                    const PopupMenuItem(
-                                                      value: 'delete',
-                                                      child: Row(
-                                                        children: [
-                                                          Icon(
-                                                            Icons.delete,
-                                                            size: 16,
-                                                            color: Colors.red,
-                                                          ),
-                                                          SizedBox(width: 8),
-                                                          Text('Delete'),
-                                                        ],
-                                                      ),
-                                                    ),
-                                                  ];
-                                                },
-                                              ),
-                                            ],
-                                          ),
-                                        ),
+                                        const DataCell(Text('')),
+                                        const DataCell(Text('')),
                                       ],
-                                    );
-                                  }),
-
-                                  // Total revenue row for this route
-                                  DataRow(
-                                    color: WidgetStateProperty.all(
-                                      Colors.green.shade50,
                                     ),
-                                    cells: [
-                                      DataCell(
-                                        Text(
-                                          'TOTAL',
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.green.shade800,
-                                          ),
-                                        ),
+                                  ],
+                                ),
+                                const SizedBox(height: 24),
+                              ],
+                            );
+                          }),
+                        ],
+                      ),
+                    );
+                  } else {
+                    // Show all schedules in one table with route column when "All Routes" is selected
+                    return SingleChildScrollView(
+                      child: Column(
+                        children: [
+                          DataTable(
+                            columnSpacing: 45, // Reduced spacing between columns
+                            headingRowColor: WidgetStateProperty.all(
+                              Colors.grey.shade50,
+                            ),
+                            headingTextStyle: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF2D3748),
+                            ),
+                            dataTextStyle: TextStyle(
+                              color: Colors.grey.shade700,
+                            ),
+                            columns: const [
+                              DataColumn(label: Text("Route")), // Added Route column
+                              DataColumn(label: Text("Date")),
+                              DataColumn(label: Text("Time")),
+                              DataColumn(label: Text("Price")),
+                              DataColumn(label: Text("Driver")),
+                              DataColumn(label: Text("Van License")),
+                              DataColumn(label: Text("Seats")),
+                              DataColumn(label: Text("Revenue")),
+                              DataColumn(label: Text("Status")),
+                              DataColumn(label: Text("Actions")),
+                            ],
+                            rows: [
+                              // All schedule rows with route column
+                              ...filteredSchedules.map(
+                                (schedule) =>
+                                    _buildScheduleRowWithRoute(schedule),
+                              ),
+                              // Total revenue row for all schedules
+                              DataRow(
+                                color: WidgetStateProperty.all(
+                                  Colors.green.shade50,
+                                ),
+                                cells: [
+                                  DataCell(
+                                    Text(
+                                      'TOTAL',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.green.shade800,
                                       ),
-                                      const DataCell(Text('')),
-                                      const DataCell(Text('')),
-                                      const DataCell(Text('')),
-                                      const DataCell(Text('')),
-                                      const DataCell(Text('')),
-                                      DataCell(
-                                        Text(
-                                          totalRevenue > 0
-                                              ? '${totalRevenue.toStringAsFixed(2)} B'
-                                              : '0.00 B',
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.green.shade800,
-                                          ),
-                                        ),
-                                      ),
-                                      const DataCell(Text('')),
-                                      const DataCell(Text('')),
-                                    ],
+                                    ),
                                   ),
+                                  const DataCell(Text('')),
+                                  const DataCell(Text('')),
+                                  const DataCell(Text('')),
+                                  const DataCell(Text('')),
+                                  const DataCell(Text('')),
+                                  const DataCell(Text('')),
+                                  DataCell(
+                                    Text(
+                                      totalRevenue > 0
+                                          ? '${totalRevenue.toStringAsFixed(2)} B'
+                                          : '0.00 B',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.green.shade800,
+                                      ),
+                                    ),
+                                  ),
+                                  const DataCell(Text('')),
+                                  const DataCell(Text('')),
                                 ],
                               ),
-                              const SizedBox(height: 16),
                             ],
-                          );
-                        }),
-                      ],
-                    ),
-                  );
+                          ),
+                        ],
+                      ),
+                    );
+                  }
                 },
               ),
             ),
@@ -1924,13 +2066,13 @@ class _BulkDriverUpdateDialogState extends State<BulkDriverUpdateDialog> {
       }
 
       setState(() {
-        _updateLog.add('\n✅ Update complete:');
+        _updateLog.add('\nUpdate complete:');
         _updateLog.add('- Updated: $updatedCount schedules');
         _updateLog.add('- Skipped: $skippedCount schedules (no change needed)');
       });
     } catch (e) {
       setState(() {
-        _updateLog.add('❌ Error: $e');
+        _updateLog.add('Error: $e');
       });
     } finally {
       setState(() => _isUpdating = false);
